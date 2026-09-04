@@ -1,0 +1,25 @@
+# 点群データと生成物 (数 GB 単位)。作り方は README と scripts/ を参照
+data/
+*.las
+*.laz
+*.parquet
+*.zip
+*.duckdb
+*.duckdb.wal
+
+# 実行ログ (実験結果として残すものは experiments/*/results/ に置く)
+*.log
+!experiments/**/results/*.log
+
+# ビューアの動作確認で生成される画像・ログ
+viewer/test_*.png
+viewer/headless.png
+viewer/serve.log
+
+# 第三者のビューアのスクリーンショット (参考用。公開しない)
+docs/images/reference_*.png
+
+node_modules/
+__pycache__/
+.DS_Store
+Thumbs.db

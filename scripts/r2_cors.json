@@ -1,0 +1,11 @@
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": ["https://kanahiro.github.io", "http://localhost:5173", "http://127.0.0.1:8080"],
+      "AllowedMethods": ["GET", "HEAD"],
+      "AllowedHeaders": ["Range", "Content-Type"],
+      "ExposeHeaders": ["Content-Length", "Content-Range", "Accept-Ranges", "ETag"],
+      "MaxAgeSeconds": 86400
+    }
+  ]
+}

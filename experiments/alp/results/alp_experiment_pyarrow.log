@@ -1,0 +1,15 @@
+09jc602_int32_delta.parquet: 52 s
+Traceback (most recent call last):
+  File "C:\Users\yshiw\Documents\GIS\las2geoparquet\alp_experiment_pyarrow.py", line 44, in <module>
+    write("09jc602_geoarrow.parquet", "09jc602_double_bss.parquet", flatten, enc_c)
+  File "C:\Users\yshiw\Documents\GIS\las2geoparquet\alp_experiment_pyarrow.py", line 22, in write
+    tbl = transform(pf.read_row_group(i))
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\yshiw\Documents\GIS\las2geoparquet\alp_experiment_pyarrow.py", line 39, in flatten
+    cols = {"x": g.field("x"), "y": g.field("y"), "z": g.field("z")}
+                 ^^^^^^^
+AttributeError: 'pyarrow.lib.ChunkedArray' object has no attribute 'field'
+exit=1
+09jc602_int32_delta_dict.parquet: 63 s
+
+exit=0

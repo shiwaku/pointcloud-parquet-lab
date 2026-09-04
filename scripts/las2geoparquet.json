@@ -1,0 +1,13 @@
+[
+  {
+    "type": "readers.las",
+    "filename": "data/09jc602/09jc602.las",
+    "override_srs": "EPSG:6677"
+  },
+  {
+    "type": "writers.arrow",
+    "filename": "data/09jc602.parquet",
+    "format": "geoparquet",
+    "batch_size": 262144
+  }
+]

@@ -1,0 +1,6 @@
+Run Time (s): real 27.666 user 240.765625 sys 48.203125
+Not implemented Error: Unrecognized option for PARQUET: PARQUET_VERSION
+Run Time (s): real 0.017 user 0.015625 sys 0.000000
+Not implemented Error: Unrecognized option for PARQUET: PARQUET_VERSION
+Run Time (s): real 0.009 user 0.015625 sys 0.000000
+exit=1
