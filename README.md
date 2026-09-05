@@ -26,11 +26,14 @@ LOD 付き Parquet (PCP) への変換スクリプトを含む。
 | GeoParquet (ZSTD, GeoArrow struct) | `09jc602_geoarrow.parquet` | **2.92 GB** | 11.7 | 0.34 | +9 分 06 秒 | **0.1 s** |
 | COPC (untwine) | `09jc602_untwine.copc.laz` | 2.25 GB | 9.0 | 0.26 | **5 分 26 秒** | **0.5 s** |
 | COPC (PDAL writers.copc) | `09jc602.copc.laz` | 2.33 GB | 9.3 | 0.27 | 69 分 37 秒 | 0.8 s |
+| PCP (Parquet, Morton 順 + LOD) | `09jc602_pcp.parquet` | 2.32 GB | 9.3 | 0.27 | +14 分 38 秒 | 0.2 s |
 | LAZ | `09jc602.laz` | 1.90 GB | 7.6 | **0.22** | 3 分 52 秒 | 84.6 s |
 
 bbox クエリ = 100 m 四方 (`X: -77100〜-77000, Y: 11000〜11100`) の点数を数える。
 全形式とも **449,428 点**で一致。
-「+」の生成時間は `09jc602.parquet` (約 5 分) からの追加時間。
+「+」の生成時間は `09jc602.parquet` (約 5 分) からの追加時間。PCP は GeoArrow 版 (+9 分 06 秒) から
+さらに 5 分 32 秒。PCP の bbox クエリは量子化した INT32 列 (`x BETWEEN -7710000 AND -7700000 …`) に対するもので、
+Morton 順のため row group の bbox が小さく、3,821 row group の統計で読み飛ばしが効く (2026-09-06 計測)。
 COPC の 69 分は PDAL `writers.copc` 固有の遅さで、同じ入力を untwine で作ると 5 分 26 秒
 (2026-09-05 再計測。内訳は [7 章](#7-計測結果の詳細))。COPC を作るなら untwine を使う。
 
@@ -39,12 +42,14 @@ COPC の 69 分は PDAL `writers.copc` 固有の遅さで、同じ入力を untw
 | 用途 | 形式 |
 |---|---|
 | 保管・受け渡し | LAZ |
-| Web 配信・ビューア (範囲/解像度指定の部分読み) | COPC (生成は untwine で) |
+| Web 配信・ビューア (範囲/解像度指定の部分読み) | COPC (生成は untwine で)。Parquet で揃えたいなら PCP |
 | SQL で属性集計・他データとの結合 (DuckDB spatial の `ST_*` を使う) | GeoParquet (ZSTD + wkb) |
 | 座標を数値として頻繁に扱う、bbox 抽出、容量も抑えたい | GeoParquet (ZSTD + GeoArrow struct) |
 | GDAL / QGIS から読む | どの GeoParquet でも可 |
 
 LOD 付きで Web 配信したい場合は、COPC のほか、row group をレベル別に並べ直した Parquet (PCP、[11 章](#11-pcp-point-cloud-parquet-への変換と-r2-配置)) でもできる。
+サイズ・bbox クエリは COPC と同等だが、GeoParquet ではない (GDAL / QGIS / DuckDB spatial では点群として読めない) うえ、
+読めるビューアが kanahiro.github.io/pcp だけで、その要件も更新で変わる。
 GeoParquet そのままでも row group 単位の部分読みは効く ([10 章](#10-自作ビューア-viewer)) が、LOD は無い。
 
 ### 所見
@@ -62,6 +67,9 @@ GeoParquet そのままでも row group 単位の部分読みは効く ([10 章]
   double 列なので row group 統計がそのまま座標に効き、デコードも要らない。
   サイズも 2.92 GB で GeoParquet 3 種の中で最小。
   代わりに DuckDB spatial 拡張 (v1.1.3) では読めない
+- **PCP は COPC と同じサイズ・同じ bbox 速度を Parquet で実現する** (2.32 GB, 0.2 秒)。
+  座標を INT32 に量子化して DELTA 符号化し、Morton 順に並べているため。ただし LOD 順に並べ替えた
+  副作用で `gps_time` が圧縮されなくなり (0.99 GB)、既定で落としている
 - ZSTD + wkb 化でサイズは 7.87 → 3.80 GB (52% 減)。
   DuckDB spatial は `geo` メタデータを読んで `wkb` 列を GEOMETRY 型として
   自動認識するので、`ST_X(wkb)` のようにキャスト無しで書ける
@@ -438,6 +446,14 @@ FROM parquet_metadata('data/09jc602.parquet') GROUP BY 1 ORDER BY 2 DESC;
 ```powershell
 # LAS/LAZ/COPC 側
 & $PDAL info --summary data/09jc602.copc.laz
+```
+
+```sql
+-- bbox クエリ (100 m 四方)。PCP は INT32 量子化座標なので 100 倍した整数で書く
+SELECT count(*) FROM 'data/09jc602_geoarrow.parquet'
+WHERE geometry.x BETWEEN -77100 AND -77000 AND geometry.y BETWEEN 11000 AND 11100;   -- 0.09 s
+SELECT count(*) FROM 'data/09jc602_pcp.parquet'
+WHERE x BETWEEN -7710000 AND -7700000 AND y BETWEEN 1100000 AND 1110000;              -- 0.18 s
 ```
 
 ### 列単位の集計 (Classification 別点数)
