@@ -3,7 +3,7 @@ data/09jc602/09jc602.las から LAZ / COPC / GeoParquet を生成する一連の
 どこから実行しても、入出力はリポジトリルートの data/ 以下。
 
 前提:
-  - PDAL 2.10.2 (conda-forge, arrow プラグイン入り) が C:\mm\pdal にあること
+  - PDAL 2.10.2 (conda-forge, arrow プラグイン入り) と untwine が C:\mm\pdal にあること
     → 未構築なら .\scripts\setup_pdal.ps1 を先に実行
   - duckdb CLI が PATH にあること
   - python が PATH にあること (make_repack_sql.py 用)
@@ -18,6 +18,7 @@ $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")   # リポジトリルート
 
 $PDAL = "C:\mm\pdal\Library\bin\pdal.exe"
+$UNTWINE = "C:\mm\pdal\Library\bin\untwine.exe"   # setup_pdal.ps1 で同じ環境に入る
 $SRC  = "data/09jc602/09jc602.las"
 $SRS  = "EPSG:6677"   # JGD2011 / 平面直角座標系 IX 系。LAS に測地情報が無いため付与する
 
@@ -41,9 +42,17 @@ Step "LAZ" {
 }
 
 # --- 3. COPC --------------------------------------------------------------------
-Step "COPC" {
-    & $PDAL translate $SRC data/09jc602.copc.laz -w writers.copc --readers.las.override_srs=$SRS
+# untwine (マルチスレッド) を使う。2.5 億点で 5 分 26 秒 / メモリ 0.8 GB / 一時ファイル 20 GB。
+# PDAL の writers.copc は単一スレッドで全点をメモリに載せるため 69 分 37 秒かかった (experiments/copc/)。
+Step "COPC (untwine)" {
+    New-Item -ItemType Directory -Force C:\mm\untwine_tmp | Out-Null
+    & $UNTWINE -i $SRC -o data/09jc602_untwine.copc.laz --temp_dir C:\mm\untwine_tmp --a_srs $SRS
+    Remove-Item -Recurse -Force C:\mm\untwine_tmp
 }
+# 比較用に残している writers.copc 版 (data/09jc602.copc.laz)。時間がかかるので既定では実行しない
+# Step "COPC (writers.copc)" {
+#     & $PDAL translate $SRC data/09jc602.copc.laz -w writers.copc --readers.las.override_srs=$SRS
+# }
 
 # --- 4. GeoParquet を ZSTD + wkb のみに再パック -----------------------------------
 # writers.arrow には圧縮方式の指定も xyz/wkb を落とすオプションも無いので後処理で行う
@@ -54,7 +63,7 @@ Step "GeoParquet repack (ZSTD + wkb only)" {
 
 # --- 5. 結果一覧 ------------------------------------------------------------------
 Write-Host "`n### sizes" -ForegroundColor Cyan
-Get-ChildItem data/09jc602/09jc602.las, data/09jc602.laz, data/09jc602.copc.laz, data/09jc602.parquet, data/09jc602_zstd.parquet |
+Get-ChildItem data/09jc602/09jc602.las, data/09jc602.laz, data/09jc602.copc.laz, data/09jc602_untwine.copc.laz, data/09jc602.parquet, data/09jc602_zstd.parquet |
     Select-Object Name, @{n = 'GB'; e = { [math]::Round($_.Length / 1GB, 2) } },
                         @{n = 'bytes_per_point'; e = { [math]::Round($_.Length / 249880253, 1) } } |
     Format-Table -AutoSize

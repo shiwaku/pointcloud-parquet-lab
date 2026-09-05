@@ -1,0 +1,12 @@
+# 2026-09-05. 64 GB RAM / 16 コア。PDAL 2.10.2 (conda-forge), untwine 1.5.1 (conda-forge)。
+# 2,607 万点の回は bash の time で別途計測 (real 1m31.238s, 出力 241,550,169 B)。以下は copc_bench.ps1 のログ。
+06:05:22 ### writers.copc 104M start
+06:15:54 ### writers.copc 104M end  elapsed 00:10:31  peak_ws 11,784 MB
+06:15:54 size 972572170
+06:15:54 ### untwine 250M start
+06:21:20 ### untwine 250M end  elapsed 00:05:26  peak_ws 802 MB
+06:21:20 size 2253383275
+06:21:20 DONE
+# 参考: README 記載の writers.copc 全体 (2 億 4,988 万点) = 69 分 37 秒 (2026-09-01)
+# bbox 100 m 四方 (readers.copc.bounds) の抽出: writers.copc 版 0.8 s / untwine 版 0.5 s。どちらも 449,428 点
+# untwine 版ヘッダ: 249,880,253 点, LAS 1.4 / PDRF 7, copc=true, CRS = JGD2011 / Japan Plane Rectangular CS IX

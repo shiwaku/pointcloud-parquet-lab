@@ -24,19 +24,22 @@ LOD 付き Parquet (PCP) への変換スクリプトを含む。
 | GeoParquet (Snappy, xyz+wkb) | `09jc602.parquet` | 7.87 GB | 31.5 | 0.93 | 約 5 分 | **1.8 s** |
 | GeoParquet (ZSTD, wkb のみ) | `09jc602_zstd.parquet` | 3.80 GB | 15.2 | 0.45 | +2 分 19 秒 | 5.8 s |
 | GeoParquet (ZSTD, GeoArrow struct) | `09jc602_geoarrow.parquet` | **2.92 GB** | 11.7 | 0.34 | +9 分 06 秒 | **0.1 s** |
-| COPC | `09jc602.copc.laz` | 2.33 GB | 9.3 | 0.27 | **69 分 37 秒** | **0.8 s** |
+| COPC (untwine) | `09jc602_untwine.copc.laz` | 2.25 GB | 9.0 | 0.26 | **5 分 26 秒** | **0.5 s** |
+| COPC (PDAL writers.copc) | `09jc602.copc.laz` | 2.33 GB | 9.3 | 0.27 | 69 分 37 秒 | 0.8 s |
 | LAZ | `09jc602.laz` | 1.90 GB | 7.6 | **0.22** | 3 分 52 秒 | 84.6 s |
 
 bbox クエリ = 100 m 四方 (`X: -77100〜-77000, Y: 11000〜11100`) の点数を数える。
 全形式とも **449,428 点**で一致。
 「+」の生成時間は `09jc602.parquet` (約 5 分) からの追加時間。
+COPC の 69 分は PDAL `writers.copc` 固有の遅さで、同じ入力を untwine で作ると 5 分 26 秒
+(2026-09-05 再計測。内訳は [7 章](#7-計測結果の詳細))。COPC を作るなら untwine を使う。
 
 ### 用途別の選択
 
 | 用途 | 形式 |
 |---|---|
 | 保管・受け渡し | LAZ |
-| Web 配信・ビューア (範囲/解像度指定の部分読み) | COPC |
+| Web 配信・ビューア (範囲/解像度指定の部分読み) | COPC (生成は untwine で) |
 | SQL で属性集計・他データとの結合 (DuckDB spatial の `ST_*` を使う) | GeoParquet (ZSTD + wkb) |
 | 座標を数値として頻繁に扱う、bbox 抽出、容量も抑えたい | GeoParquet (ZSTD + GeoArrow struct) |
 | GDAL / QGIS から読む | どの GeoParquet でも可 |
@@ -48,8 +51,9 @@ GeoParquet そのままでも row group 単位の部分読みは効く ([10 章]
 
 - **容量最小は LAZ** (1.90 GB, LAS の 22%)。ただし空間インデックスが無いので
   bbox 抽出は LAS と同じく全読み (84.6 s)
-- **COPC は bbox 抽出が 0.8 秒**で LAZ の 100 倍速い。容量も 2.33 GB と小さい。
-  代わりに生成が 69 分と LAZ の 18 倍かかる (オクツリー構築)
+- **COPC は bbox 抽出が 0.5〜0.8 秒**で LAZ の 100 倍速い。容量も 2.25〜2.33 GB と小さい。
+  生成は untwine なら 5 分半 (LAZ の 1.4 倍) で済む。PDAL `writers.copc` だと 69 分かかるが、
+  これは単一スレッドで全点をメモリに載せる実装のせいで、形式のコストではない
 - **GeoParquet は列単位の集計が圧倒的に速い** (0.3〜0.6 秒)。
   属性で絞る・統計を取る用途なら他形式が勝てない
 - **GeoParquet の bbox 抽出も 1.8 秒**と速い。row group ごとの min/max 統計で
@@ -80,6 +84,7 @@ GeoParquet そのままでも row group 単位の部分読みは効く ([10 章]
 │   ├── build_pcp.ps1         PCP 変換と R2 アップロードの手順
 │   └── r2_cors.json          R2 バケットの CORS 設定
 ├── experiments/alp/        「ALP で LAZ に近づくか」の検証 (results/ に実行ログ)
+├── experiments/copc/       COPC 生成時間の切り分け (writers.copc の点数スケーリング vs untwine)
 ├── viewer/                 GeoParquet 点群ビューア (deck.gl + hyparquet)
 │   ├── index.html / app.js / worker.js / points.js
 │   ├── serve.py              Range 対応の静的サーバ
@@ -88,7 +93,8 @@ GeoParquet そのままでも row group 単位の部分読みは効く ([10 章]
 ├── docs/images/            スクリーンショット
 └── data/                   点群と生成物 (git 管理外。合計 40 GB 弱)
     ├── 09jc602/09jc602.las   入力 (09jc602.zip を展開)
-    ├── 09jc602.laz / 09jc602.copc.laz
+    ├── 09jc602.laz
+    ├── 09jc602.copc.laz / 09jc602_untwine.copc.laz   COPC (PDAL writers.copc 版 / untwine 版)
     ├── 09jc602.parquet / 09jc602_zstd.parquet / 09jc602_geoarrow.parquet
     ├── 09jc602_geoarrow_overview.parquet   ビューアの概観用
     ├── 09jc602_pcp.parquet / 09jc602_pcp_test.parquet   PCP 形式 (全体 / 200 m 四方のテスト)。*.sql は生成に使った DuckDB SQL
@@ -103,7 +109,7 @@ GeoParquet そのままでも row group 単位の部分読みは効く ([10 章]
 
 | ファイル | 内容 |
 |---|---|
-| `scripts/setup_pdal.ps1` | conda-forge PDAL 2.10.2 を `C:\mm\pdal` に構築 |
+| `scripts/setup_pdal.ps1` | conda-forge PDAL 2.10.2 と untwine 1.5.1 を `C:\mm\pdal` に構築 |
 | `scripts/build.ps1` | LAZ / COPC / GeoParquet を一括生成 |
 | `scripts/las2geoparquet.json` | PDAL パイプライン (LAS → GeoParquet) |
 | `scripts/make_repack_sql.py` | `geo` メタデータを引き継ぐ再パック SQL を生成 |
@@ -119,6 +125,8 @@ GeoParquet そのままでも row group 単位の部分読みは効く ([10 章]
 | `experiments/alp/alp_estimate.py` | ALP の理論サイズ (1024 値ブロック FOR + bit-pack) を int32 座標から見積もる |
 | `experiments/alp/alp_duckdb_native.ps1` | DuckDB のストレージに実装済みの本物の ALP で座標列サイズを実測 |
 | `experiments/alp/results/*.log` | 上記の実行ログ |
+| `experiments/copc/copc_bench.ps1` | COPC 生成時間の切り分け: `writers.copc` を 2,607 万 / 1 億 429 万点で計測、untwine で全体を生成 (メモリピークも記録) |
+| `experiments/copc/results/copc_bench.log` | その実行ログ |
 | `viewer/` | GeoParquet 点群ビューア (後述) |
 | `docs/images/viewer_*.png` | ビューアの画面 |
 | `docs/images/reference_parquet_field_viewer.png` | 参考にした他のビューアの画面 (第三者の UI のため git 管理外) |
@@ -170,6 +178,14 @@ feather は正常に書けるので arrow 本体ではなく parquet 経路の�
 
 この切り分けの過程で OSGeo4W 側を更新してしまい元に戻せない。経緯は [付録 A](#付録-a-osgeo4w-への副作用) に分離した。
 
+### untwine 1.5.1 (conda-forge)
+
+COPC 生成用。PDAL の `writers.copc` は単一スレッドで全点をメモリに載せるため、2.5 億点で 69 分・30 GB 近くを使う。
+untwine はマルチスレッドで同じ入力を 5 分 26 秒・メモリ 0.8 GB で処理する ([7 章](#7-計測結果の詳細))。
+`scripts/setup_pdal.ps1` で PDAL と同じ環境 (`C:\mm\pdal`) に入る。既存環境に足すなら
+`C:\mm\micromamba.exe install -p C:\mm\pdal -c conda-forge untwine`。
+`--temp_dir` に一時ファイルを約 20 GB (9,000 個以上) 作るので、短いパスの空きディスクを指定し、終わったら消す。
+
 ### GDAL 3.13.3 (OSGeo4W)
 
 GeoArrow struct への再エンコード (`scripts/build_geoarrow.ps1`) に使う。
@@ -218,7 +234,11 @@ $SRS  = "EPSG:6677"
 # LAZ
 & $PDAL translate data/09jc602/09jc602.las data/09jc602.laz --readers.las.override_srs=$SRS
 
-# COPC
+# COPC (untwine。推奨。5 分 26 秒)
+& "C:\mm\pdal\Library\bin\untwine.exe" -i data/09jc602/09jc602.las -o data/09jc602_untwine.copc.laz --temp_dir C:\mm\untwine_tmp --a_srs $SRS
+Remove-Item -Recurse -Force C:\mm\untwine_tmp
+
+# COPC (PDAL writers.copc。69 分 37 秒。比較用に残しているだけで、新規に作るなら untwine を使う)
 & $PDAL translate data/09jc602/09jc602.las data/09jc602.copc.laz -w writers.copc --readers.las.override_srs=$SRS
 
 # GeoParquet を ZSTD + wkb のみに再パック
@@ -343,6 +363,7 @@ DuckDB spatial で `ST_*` を使いたいなら ZSTD+wkb 版を使うこと。
 data/09jc602/09jc602.las  (LAS 1.2, 入力)
  ├─ PDAL translate (writers.las)  ────────► 09jc602.laz
  ├─ PDAL translate (writers.copc) ────────► 09jc602.copc.laz
+ ├─ untwine ───────────────────────────────► 09jc602_untwine.copc.laz     同じ COPC。13 倍速い
  └─ PDAL pipeline  (writers.arrow) ───────► 09jc602.parquet                GeoParquet 1.0 / Snappy / xyz + wkb
       ├─ DuckDB COPY (repack_zstd.sql) ───► 09jc602_zstd.parquet           GeoParquet 1.0 / ZSTD / wkb のみ
       └─ GDAL ogr2ogr (build_geoarrow.ps1) ► 09jc602_geoarrow.parquet       GeoParquet 1.1 / ZSTD / GeoArrow struct
@@ -352,14 +373,15 @@ data/09jc602/09jc602.las  (LAS 1.2, 入力)
 ```
 
 PDAL 出力の `09jc602.parquet` が Parquet 系の根で、それ以外の Parquet は全部そこからの再エンコード。
-LAS を直接読むのは PDAL の 3 本だけ。
+LAS を直接読むのは PDAL の 3 本と untwine だけ。
 
 ### ファイル別
 
 | ファイル | 作成ツール / スクリプト | 入力 | 座標の持ち方 | 圧縮・エンコード | row group | 点の並び | メタデータ | 読めるもの | サイズ |
 |---|---|---|---|---|---|---|---|---|---|
 | `09jc602.laz` | PDAL 2.10.2 `translate` (writers.las、拡張子で LAZ) | LAS | int32 × scale 0.01 (LAS のまま)。**LAS 1.4 / PDRF 7 に上がる** (WKT で CRS を書くため。1.2 PDRF 3 のままではない) | LASzip (予測 + 算術符号) | – (chunk 5 万点) | スキャン順 | LAS 1.4 ヘッダ + WKT CRS (EPSG:6677) | LAS を読める全ツール | 1.90 GB |
-| `09jc602.copc.laz` | PDAL `translate -w writers.copc` | LAS | 同上 (LAS 1.4 / PDRF 7) | LASzip + 八分木 (EPT 階層) | 八分木ノード単位 | 空間 (八分木) | LAS 1.4 + COPC VLR + WKT CRS | QGIS、Potree 等 COPC 対応ビューア、PDAL | 2.33 GB |
+| `09jc602.copc.laz` | PDAL `translate -w writers.copc` (単一スレッド。69 分) | LAS | 同上 (LAS 1.4 / PDRF 7) | LASzip + 八分木 (EPT 階層) | 八分木ノード単位 | 空間 (八分木) | LAS 1.4 + COPC VLR + WKT CRS | QGIS、Potree 等 COPC 対応ビューア、PDAL | 2.33 GB |
+| `09jc602_untwine.copc.laz` | untwine 1.5.1 `--a_srs EPSG:6677` (マルチスレッド。5 分 26 秒) | LAS | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 | 2.25 GB |
 | `09jc602.parquet` | PDAL `pipeline scripts/las2geoparquet.json` (writers.arrow, `format=geoparquet`) | LAS | double。`xyz` (list<double>[3], GeoArrow 風) と `wkb` (BLOB) の **二重持ち** | Snappy 固定。RLE_DICTIONARY | 954 個 (`batch_size` 262,144) | スキャン順 | `geo` 1.0.0 (primary = wkb, CRS 6677), `ARROW:schema` | GDAL/QGIS、DuckDB (spatial 可)、pyarrow | 7.87 GB |
 | `09jc602_zstd.parquet` | DuckDB 1.1.3 `COPY` (`make_repack_sql.py` → `repack_zstd.sql`) | `09jc602.parquet` | `wkb` のみ (BLOB、5 B ヘッダ + double×3) | ZSTD。PLAIN (DuckDB 1.1 は辞書を使わない) | 250 個 (約 100 万点) | スキャン順 | `geo` を `KV_METADATA` で引き継ぎ | GDAL/QGIS、DuckDB spatial。座標を数値で使うには WKB を解く | 3.80 GB |
 | `09jc602_geoarrow.parquet` | GDAL 3.13.3 `ogr2ogr -lco GEOMETRY_ENCODING=GEOARROW` (`build_geoarrow.ps1`) | `09jc602.parquet` (wkb 列を geometry として読む) | `geometry` = struct<x,y,z double> の 1 列 | ZSTD。RLE_DICTIONARY (0.01 刻みなので実質整数格納) | 250 個 (100 万点) | スキャン順 | `geo` 1.1.0 (`encoding: point`, CRS 6677), `gdal:creation-options` | GDAL/QGIS、DuckDB 素の parquet 読み (spatial 拡張は不可)、自作ビューア | 2.92 GB |
@@ -449,6 +471,28 @@ z だけを読めば済み、最速。
 
 double 列自体は ZSTD でも 5〜8% しか縮まないが、WKB のヘッダ 5 B/点と
 BLOB としての取り回しが無くなる分で 0.8 GB 減った。
+
+### COPC 生成時間の切り分け (2026-09-05)
+
+1 章の「COPC 生成 69 分 37 秒」が形式の性質か PDAL `writers.copc` の性質かを、点数を変えた計測と untwine との比較で確かめた
+(`experiments/copc/copc_bench.ps1`、ログは `results/copc_bench.log`)。
+
+| ツール | 点数 | 時間 | メモリピーク (WorkingSet) | 出力 |
+|---|---|---|---|---|
+| PDAL 2.10.2 `writers.copc` | 26,073,803 (先頭 1/10) | 1 分 31 秒 | 3.1 GB | 0.24 GB |
+| PDAL 2.10.2 `writers.copc` | 104,295,212 (先頭 4/10) | 10 分 31 秒 | 11.8 GB | 0.97 GB |
+| PDAL 2.10.2 `writers.copc` | 249,880,253 (全体、2026-09-01 の値) | 69 分 37 秒 | 未計測 (比例なら 28 GB) | 2.33 GB |
+| untwine 1.5.1 | 249,880,253 (全体) | **5 分 26 秒** | **0.8 GB** | 2.25 GB |
+
+- `writers.copc` は点数 4 倍で時間 6.9 倍と**超線形**に遅くなる。メモリも点数に比例して増え、全体では 30 GB 近くになる。
+  2.5 億点で 69 分は異常値ではなく、この実装の延長線上にある。CPU は 16 コアのうち 1 つしか使わない
+- 全体の実行では出力ファイルが開始 50 分後に初めて作られた (作成 23:27、完了 23:45)。
+  全点を読み終えて八分木を組んでから書き出す構造で、前半が読み込みと構築、後半 18 分が LAZ 圧縮
+- untwine は一時ファイル (約 20 GB、9,000 個超) に点を振り分けながらマルチスレッドで処理するのでメモリは 0.8 GB で済む。
+  PDAL 公式も大きな入力には untwine を勧めている
+- untwine 版の検証: 249,880,253 点、LAS 1.4 / PDRF 7、`copc: true`、CRS = JGD2011 / Japan Plane Rectangular CS IX、
+  範囲は入力と一致。100 m 四方の bbox 抽出 (`readers.copc.bounds`) は 449,428 点で他形式と一致し、0.5 秒 (writers.copc 版は 0.8 秒)
+- 両方の COPC を残しているのは比較のため。新規に作るなら untwine (`scripts/build.ps1` はそちらに変更した)
 
 ### 列の保持 (LAS の全ディメンションが残っているか)
 
@@ -618,7 +662,7 @@ COPC 的な LOD 描画をしているビューア (PCP / Spatial Lab「Parquet f
 - ただし PDAL / GDAL の出力はスキャン順のまま 1M 点ずつ切っただけなので、
   このビューアの前提 (レベル別 row group + geometric error) は満たさない。
   やるなら COPC 同様にオクツリー (または点間隔ベースの間引き) を構築して並べ直す工程が要る。
-  COPC 生成に 69 分かかった部分と同じコストが Parquet 側にも乗る
+  COPC 生成 (untwine で 5 分半、PDAL writers.copc だと 69 分) と同種のコストが Parquet 側にも乗る
 - geometric error をどこに書くか (row group の key-value か、別 sidecar か) は
   GeoParquet 標準にはまだ無く、ビューア独自の取り決めになる
 
@@ -872,6 +916,7 @@ C:\OSGeo4W\bin\osgeo4w-setup.exe -A -k -q -n -O -R C:\OSGeo4W -l C:\Users\yshiw\
 | 症状 | 原因・対処 | 章 |
 |---|---|---|
 | OSGeo4W の PDAL で parquet を書くと落ちる (exit `0xC0000409`) | arrow プラグインの parquet 経路のバグ。conda-forge 版 PDAL を使う | 4 |
+| COPC 生成に 1 時間以上かかる | PDAL `writers.copc` は単一スレッドで全点をメモリに載せ、点数に対して超線形に遅くなる。untwine を使う (2.5 億点で 5 分半) | 4, 7 |
 | `osgeo4w-setup` / micromamba のダウンロードが `No such file or directory` | Windows 260 文字制限。短いパスを使う | 付録 A |
 | GeoParquet の CRS が EPSG:4326 になる | `writers.arrow` の既定。`readers.las.override_srs` を付ける | 3 |
 | PDAL 出力が LAS より小さくならない | 座標を `xyz` + `wkb` で二重に持つ、Snappy 固定 | 5.1 |

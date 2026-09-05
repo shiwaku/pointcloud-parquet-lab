@@ -25,7 +25,8 @@ if (-not (Test-Path $mm)) {
         -OutFile $mm
 }
 
-& $mm create -y -p "$root\pdal" -c conda-forge pdal
+& $mm create -y -p "$root\pdal" -c conda-forge pdal untwine   # untwine は COPC 生成用 (writers.copc より 13 倍速い。README 7 章)
 
 & "$root\pdal\Library\bin\pdal.exe" --version
 & "$root\pdal\Library\bin\pdal.exe" --drivers | Select-String arrow
+& "$root\pdal\Library\bin\untwine.exe" --help 2>&1 | Select-Object -First 1
