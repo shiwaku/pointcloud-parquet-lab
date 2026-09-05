@@ -11,7 +11,7 @@ data/09jc602/09jc602.las から LAZ / COPC / GeoParquet を生成する一連の
 注意:
   OSGeo4W 版 PDAL 2.10.0-4 は arrow プラグインを同梱しているが
   parquet 書き出しで必ずクラッシュする (0xC0000409 / 出力 4 バイト)。
-  feather は正常。詳細は README.md 参照。
+  feather は正常。詳細は REPORT.md 参照。
 #>
 
 $ErrorActionPreference = "Stop"

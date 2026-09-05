@@ -1,5 +1,5 @@
 # COPC 生成時間の切り分け (2026-09-05)。
-# README の「COPC 生成 69 分 37 秒」が PDAL writers.copc 固有の遅さかを確かめるため、
+# REPORT.md の「COPC 生成 69 分 37 秒」が PDAL writers.copc 固有の遅さかを確かめるため、
 #   1. writers.copc を点数を変えて (2,607 万 / 1 億 429 万) 計測し、スケーリングを見る
 #   2. untwine で全体 (2 億 4,988 万点) を作って比較する
 # 実行 (リポジトリルートで): powershell -ExecutionPolicy Bypass -File experiments/copc/copc_bench.ps1

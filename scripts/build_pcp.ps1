@@ -1,5 +1,5 @@
 # GeoArrow GeoParquet → PCP (Point Cloud Parquet) を作り、Cloudflare R2 に置く。
-# リポジトリルートで実行する。詳細は README の「PCP」節と scripts/build_pcp.py の docstring。
+# リポジトリルートで実行する。詳細は REPORT.md の「PCP」節と scripts/build_pcp.py の docstring。
 $ErrorActionPreference = "Stop"
 
 # 1. 変換 (250M 点。DuckDB のソートに数十 GB の spill が出るので C:/mm/duckdb_tmp を使う)
