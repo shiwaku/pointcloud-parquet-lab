@@ -89,6 +89,8 @@ GeoParquet そのままでも row group 単位の部分読みは効く ([10 章]
 │   ├── repack_zstd.sql       生成された DuckDB SQL (ZSTD + wkb のみ)
 │   ├── build_geoarrow.ps1    GDAL で GeoArrow struct + ZSTD に再エンコード
 │   ├── verify_geoarrow.sql   GeoArrow 版の検証クエリ
+│   ├── copy_geo_metadata.py  DuckDB 出力に geo メタデータを付け直す (概観サンプルを GeoParquet にする)
+│   ├── qgis_render.py        headless QGIS で GeoParquet を描画して時間を測る
 │   ├── build_pcp.py          GeoArrow 版 → PCP (kanahiro.github.io/pcp 用の LOD 付き Parquet)
 │   ├── pcp_sort.sql          その DuckDB テンプレート (Morton ソートとレベル割り当て)
 │   ├── build_pcp.ps1         PCP 変換と R2 アップロードの手順
@@ -230,6 +232,7 @@ Python は DuckDB / pyarrow / numpy (PCP 変換、ALP 実験)。ビューアの�
 .\scripts\build.ps1
 .\scripts\build_geoarrow.ps1  # OSGeo4W の GDAL 3.13 が必要。data/09jc602.parquet から作る
 duckdb -c ".read viewer/make_overview.sql"   # ビューア用の概観サンプル (数秒)
+python scripts/copy_geo_metadata.py data/09jc602_geoarrow.parquet data/09jc602_geoarrow_overview.parquet   # 概観に geo を付けて QGIS でも開けるように
 python scripts/build_pcp.py data/09jc602_geoarrow.parquet data/09jc602_pcp.parquet   # PCP (11 章。約 7 分半)
 ```
 
@@ -396,7 +399,7 @@ LAS を直接読むのは PDAL の 3 本と untwine だけ。
 | `09jc602.parquet` | PDAL `pipeline scripts/las2geoparquet.json` (writers.arrow, `format=geoparquet`) | LAS | double。`xyz` (list<double>[3], GeoArrow 風) と `wkb` (BLOB) の **二重持ち** | Snappy 固定。RLE_DICTIONARY | 954 個 (`batch_size` 262,144) | スキャン順 | `geo` 1.0.0 (primary = wkb, CRS 6677), `ARROW:schema` | GDAL/QGIS、DuckDB (spatial 可)、pyarrow | 7.87 GB |
 | `09jc602_zstd.parquet` | DuckDB 1.1.3 `COPY` (`make_repack_sql.py` → `repack_zstd.sql`) | `09jc602.parquet` | `wkb` のみ (BLOB、5 B ヘッダ + double×3) | ZSTD。PLAIN (DuckDB 1.1 は辞書を使わない) | 250 個 (約 100 万点) | スキャン順 | `geo` を `KV_METADATA` で引き継ぎ | GDAL/QGIS、DuckDB spatial。座標を数値で使うには WKB を解く | 3.80 GB |
 | `09jc602_geoarrow.parquet` | GDAL 3.13.3 `ogr2ogr -lco GEOMETRY_ENCODING=GEOARROW` (`build_geoarrow.ps1`) | `09jc602.parquet` (wkb 列を geometry として読む) | `geometry` = struct<x,y,z double> の 1 列 | ZSTD。RLE_DICTIONARY (0.01 刻みなので実質整数格納) | 250 個 (100 万点) | スキャン順 | `geo` 1.1.0 (`encoding: point`, CRS 6677), `gdal:creation-options` | GDAL/QGIS、DuckDB 素の parquet 読み (spatial 拡張は不可)、自作ビューア | 2.92 GB |
-| `09jc602_geoarrow_overview.parquet` | DuckDB `COPY ... USING SAMPLE 1%` (`viewer/make_overview.sql`) | `09jc602_geoarrow.parquet` | 同上 struct (色・分類・強度のみ残す) | ZSTD。PLAIN | 5 個 (50 万点) | ランダム (bernoulli 1%) | **無し**。DuckDB の COPY は `geo` を落とすので GeoParquet としては無効 | 自作ビューアのみ (struct を直接読む) | 35 MB |
+| `09jc602_geoarrow_overview.parquet` | DuckDB `COPY ... USING SAMPLE 1%` (`viewer/make_overview.sql`) | `09jc602_geoarrow.parquet` | 同上 struct (色・分類・強度のみ残す) | ZSTD。PLAIN | 5 個 (50 万点) | ランダム (bernoulli 1%) | `geo` は本体から `copy_geo_metadata.py` で写す (DuckDB の COPY は落とす)。写せば GeoParquet として有効 | 自作ビューア、GDAL / QGIS | 29 MB |
 | `09jc602_int32_v1.parquet` (ALP A) | DuckDB `COPY` (`experiments/alp/alp_experiment.sql`) | `09jc602_geoarrow.parquet` | `xi` `yi` `zi` INT32 (×100)。平坦列 | ZSTD。PLAIN | 250 個 | スキャン順 | 無し (サイズ比較専用) | 表形式としてのみ | 3.21 GB |
 | `09jc602_int32_delta.parquet` (ALP B) | pyarrow (`alp_experiment_pyarrow.py`) | ALP A | 同上 INT32 | ZSTD。座標 DELTA_BINARY_PACKED、GpsTime BYTE_STREAM_SPLIT、他 PLAIN | 250 個 | スキャン順 | 無し | 同上 | 2.85 GB |
 | `09jc602_double_bss.parquet` (ALP C) | pyarrow | `09jc602_geoarrow.parquet` (struct を平坦化) | `x` `y` `z` double 平坦列 | ZSTD。座標・GpsTime BYTE_STREAM_SPLIT | 250 個 | スキャン順 | 無し | 同上 | 4.60 GB |
@@ -645,7 +648,7 @@ ALP が Parquet で実装されれば、GeoArrow struct の double 列をその�
 
 | ツール | 読める形式 | 3D (Z) | LOD / 部分読み | 備考 |
 |---|---|---|---|---|
-| QGIS (GDAL 経由、ベクタレイヤ) | wkb 版・GeoArrow 版とも | 3D ビュー可 | なし。全読み | 2.5 億点は実用外。点群レイヤ (LAS/LAZ/COPC/EPT) としては読めない |
+| QGIS (GDAL 経由、ベクタレイヤ) | wkb 版・GeoArrow 版とも | 3D ビュー可 | なし。ただし GDAL の Parquet ドライバは row group 統計で範囲外を読み飛ばす | 全域表示は 1% サンプルで。点群レイヤ (LAS/LAZ/COPC/EPT) としては読めない。下記「QGIS で開く」 |
 | lonboard (Python / Jupyter) | GeoArrow → `PointCloudLayer` | あり | なし。全点をブラウザに送る | 数百万点規模。`from_duckdb()` で DuckDB の結果を直接渡せる。EPSG:4326 に自動再投影 |
 | deck.gl + `@geoarrow/deck.gl-geoarrow` | `@geoarrow/geoparquet-wasm` で読む | ScatterplotLayer は 2D。PointCloudLayer は deck.gl 本体側 | なし (row group ごとに逐次描画は可) | 自前 Web アプリ向け |
 | DuckDB-WASM + 任意の描画 | HTTP range で row group 単位 | 描画側次第 | **row group 統計での読み飛ばしが効く** | スクリーンショットのビューアはこの系 |
@@ -656,6 +659,33 @@ GeoParquet 側の議論 (opengeospatial/geoparquet Discussion #197) でも、
 標準としての点群対応は無い。LOD 付きで配信したいなら、現状は
 (a) COPC に変換して既存ビューアを使う、(b) row group をレベル別に並べ直し
 DuckDB-WASM / parquet-wasm で自前実装する、の二択。
+
+### QGIS で開く (2026-09-06)
+
+QGIS 4.0.0 (GDAL 3.12.2) と 3.34.12 (GDAL 3.9.3) はどちらも Parquet ドライバ入りで、
+`09jc602_zstd.parquet` (Point) と `09jc602_geoarrow.parquet` (3D Point) を EPSG:6677 のベクタレイヤとして開ける。
+「レイヤ → レイヤの追加 → ベクタレイヤ」でファイルを選ぶだけ。点群レイヤ (LAS/LAZ/COPC) としては読めないので、
+点群レイヤの機能 (標高フィルタ、3D ビューの点群描画、目玉レンダラ) が欲しいなら COPC を開く。
+
+headless で描画時間を測った (`scripts/qgis_render.py`。RTX 4060 は使わず CPU 描画、1200 px 四方):
+
+| ファイル | 範囲 | 点数 | 描画 |
+|---|---|---|---|
+| `09jc602_geoarrow.parquet` (2.5 億点) | 200 m 四方 | 約 212 万点 | 5.5 秒 |
+| `09jc602_geoarrow_overview.parquet` (1% サンプル) | 全域 2 km × 1.5 km | 250 万点 | 5.7 秒 |
+
+- 2.5 億点のファイルでも 200 m 四方の表示が 5.5 秒で済むのは、GDAL の Parquet ドライバが row group 統計
+  (GeoArrow 版は x/y の min/max) で範囲外の row group を読み飛ばすため。全域を表示させると全点を読むので実用外
+- 全域を見るには 1% サンプル (`09jc602_geoarrow_overview.parquet`) を別レイヤとして開く。DuckDB で作った
+  サンプルは `geo` メタデータが無く QGIS でジオメトリ無しテーブルになるので、`scripts/copy_geo_metadata.py` で本体から写す
+- 標高で色分けするには、GeoArrow 版は z が geometry の中にあるので式 `$z` を使う (属性列には無い)。
+  wkb 版も同じ。分類は `Classification`、色は `Red` `Green` `Blue` (8 bit)
+- 縮尺依存の表示にしておくと実用的。全域〜1:10,000 は概観レイヤ、それより拡大したら本体、と
+  レイヤの「縮尺に応じた表示」で切り替える
+
+![QGIS で 200 m 四方を標高で色分け (GeoArrow 版 2.5 億点から 5.5 秒)](docs/images/qgis_geoarrow_200m.png)
+
+![QGIS で全域 (1% サンプル 250 万点、5.7 秒)](docs/images/qgis_overview_full.png)
 
 ### Parquet で LOD 配信するビューアの例
 
@@ -975,7 +1005,7 @@ C:\OSGeo4W\bin\osgeo4w-setup.exe -A -k -q -n -O -R C:\OSGeo4W -l C:\Users\yshiw\
 | PDAL 出力が LAS より小さくならない | 座標を `xyz` + `wkb` で二重に持つ、Snappy 固定 | 5.1 |
 | `duckdb -f file.sql` が動かない | `-f` は DB ファイル指定。`duckdb -c ".read file.sql"` を使う | 4 |
 | DuckDB が `IO Error: File is already open` | QGIS 等が開いている。閉じてから実行 | 4 |
-| DuckDB `COPY` で `geo` メタデータが消える | `KV_METADATA` で付け直す (`make_repack_sql.py`)。概観ファイルは付けていないので GeoParquet として無効 | 5.2, 6 |
+| DuckDB `COPY` で `geo` メタデータが消える | `KV_METADATA` で付け直す (`make_repack_sql.py`) か、書いた後に `copy_geo_metadata.py` で写す。QGIS では `geo` が無いとジオメトリ無しテーブルになる | 5.2, 6, 9 |
 | `ogr2ogr` の GeoArrow 出力に z が無い | `-nlt POINTZ` が必須 | 5.3 |
 | GeoArrow 版がファイルの 4 割を `geometry_bbox` に取られる | `WRITE_COVERING_BBOX=NO` | 5.3 |
 | DuckDB spatial を LOAD すると GeoArrow 版が `SELECT *` すらエラー | spatial 1.1.3 は GeoArrow 点エンコード非対応。spatial を読まないか wkb 版を使う | 5.4 |

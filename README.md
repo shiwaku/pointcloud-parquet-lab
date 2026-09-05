@@ -35,7 +35,7 @@
 | Web 配信・ビューア | COPC (生成は untwine)。Parquet で揃えたいなら PCP |
 | DuckDB spatial の `ST_*` で集計・結合 | GeoParquet (ZSTD + wkb) |
 | 座標を数値として扱う、bbox 抽出、容量も抑える | GeoParquet (ZSTD + GeoArrow struct)。DuckDB spatial 1.1.3 では読めない |
-| GDAL / QGIS から読む | どの GeoParquet でも可 |
+| GDAL / QGIS から読む | どの GeoParquet でも可。QGIS では 200 m 四方の表示が 5.5 秒、全域は 1% サンプルで ([REPORT 9 章](REPORT.md#qgis-で開く-2026-09-06)) |
 
 ## 作ったもの
 
@@ -54,6 +54,7 @@
 .\scripts\build.ps1                          # LAZ / COPC / GeoParquet (Snappy, ZSTD+wkb)
 .\scripts\build_geoarrow.ps1                 # GeoArrow struct 版 (OSGeo4W の GDAL 3.13)
 duckdb -c ".read viewer/make_overview.sql"   # ビューア用の 1% サンプル
+python scripts/copy_geo_metadata.py data/09jc602_geoarrow.parquet data/09jc602_geoarrow_overview.parquet   # サンプルを QGIS でも開けるように
 python viewer/serve.py                       # http://127.0.0.1:8080/viewer/
 python scripts/build_pcp.py data/09jc602_geoarrow.parquet data/09jc602_pcp.parquet   # PCP (約 5 分半)
 ```
