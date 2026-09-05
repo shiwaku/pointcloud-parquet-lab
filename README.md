@@ -25,7 +25,6 @@ LOD 付き Parquet (PCP) への変換スクリプトを含む。
 | GeoParquet (ZSTD, wkb のみ) | `09jc602_zstd.parquet` | 3.80 GB | 15.2 | 0.45 | +2 分 19 秒 | 5.8 s |
 | GeoParquet (ZSTD, GeoArrow struct) | `09jc602_geoarrow.parquet` | **2.92 GB** | 11.7 | 0.34 | +9 分 06 秒 | **0.1 s** |
 | COPC (untwine) | `09jc602_untwine.copc.laz` | 2.25 GB | 9.0 | 0.26 | **5 分 26 秒** | **0.5 s** |
-| COPC (PDAL writers.copc) | `09jc602.copc.laz` | 2.33 GB | 9.3 | 0.27 | 69 分 37 秒 | 0.8 s |
 | PCP (Parquet, Morton 順 + LOD) | `09jc602_pcp.parquet` | 2.32 GB | 9.3 | 0.27 | +14 分 38 秒 | 0.2 s |
 | LAZ | `09jc602.laz` | 1.90 GB | 7.6 | **0.22** | 3 分 52 秒 | 84.6 s |
 
@@ -34,8 +33,9 @@ bbox クエリ = 100 m 四方 (`X: -77100〜-77000, Y: 11000〜11100`) の点数
 「+」の生成時間は `09jc602.parquet` (約 5 分) からの追加時間。PCP は GeoArrow 版 (+9 分 06 秒) から
 さらに 5 分 32 秒。PCP の bbox クエリは量子化した INT32 列 (`x BETWEEN -7710000 AND -7700000 …`) に対するもので、
 Morton 順のため row group の bbox が小さく、3,821 row group の統計で読み飛ばしが効く (2026-09-06 計測)。
-COPC の 69 分は PDAL `writers.copc` 固有の遅さで、同じ入力を untwine で作ると 5 分 26 秒
-(2026-09-05 再計測。内訳は [7 章](#7-計測結果の詳細))。COPC を作るなら untwine を使う。
+COPC は untwine 1.5.1 で作った値。同じ COPC を PDAL `writers.copc` で作ると 69 分 37 秒かかる
+(2.33 GB, bbox 0.8 s) が、これは単一スレッドで全点をメモリに載せるその実装固有の遅さで、形式のコストではない
+(点数を変えた計測は [7 章](#copc-生成時間の切り分け-2026-09-05))。COPC を作るなら untwine を使う。
 
 ### 用途別の選択
 
@@ -56,9 +56,8 @@ GeoParquet そのままでも row group 単位の部分読みは効く ([10 章]
 
 - **容量最小は LAZ** (1.90 GB, LAS の 22%)。ただし空間インデックスが無いので
   bbox 抽出は LAS と同じく全読み (84.6 s)
-- **COPC は bbox 抽出が 0.5〜0.8 秒**で LAZ の 100 倍速い。容量も 2.25〜2.33 GB と小さい。
-  生成は untwine なら 5 分半 (LAZ の 1.4 倍) で済む。PDAL `writers.copc` だと 69 分かかるが、
-  これは単一スレッドで全点をメモリに載せる実装のせいで、形式のコストではない
+- **COPC は bbox 抽出が 0.5 秒**で LAZ の 170 倍速い。容量も 2.25 GB と LAZ の 1.2 倍に収まる。
+  生成は untwine で 5 分半 (LAZ の 1.4 倍)。PDAL `writers.copc` は使わない (69 分)
 - **GeoParquet は列単位の集計が圧倒的に速い** (0.3〜0.6 秒)。
   属性で絞る・統計を取る用途なら他形式が勝てない
 - **GeoParquet の bbox 抽出も 1.8 秒**と速い。row group ごとの min/max 統計で
