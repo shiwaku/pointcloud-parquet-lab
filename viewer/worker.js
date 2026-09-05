@@ -10,6 +10,13 @@ const COLUMNS = ['geometry', 'Red', 'Green', 'Blue', 'Classification']
 /** url → { file, metadata, summary } */
 const files = new Map()
 
+/** proj4 は MapLibre 版だけが使うので、必要になったときに読む */
+let proj4Promise = null
+function proj4Module() {
+  proj4Promise ??= import('https://cdn.jsdelivr.net/npm/proj4@2.15.0/+esm')
+  return proj4Promise
+}
+
 async function open(url) {
   let entry = files.get(url)
   if (entry) return entry
@@ -41,7 +48,13 @@ self.onmessage = async e => {
       })
       const colorShift = summary.colorMax > 255 ? 8 : 0
       if (msg.debug) console.log(`[worker] load rg ${msg.rg} read done ${(performance.now() - t0).toFixed(0)} ms, chunks ${chunks.length}`)
-      const bin = chunksToBinary(chunks, msg.center, colorShift)
+      // MapLibre 版: 平面直角座標を proj4 で経緯度にしてから渡す (msg.proj は proj4 の定義文字列)
+      const opts = { float64: !!msg.float64 }
+      if (msg.proj) {
+        const conv = (await proj4Module()).default(msg.proj, 'EPSG:4326')
+        opts.transform = (x, y) => conv.forward([x, y])
+      }
+      const bin = chunksToBinary(chunks, msg.center, colorShift, opts)
       if (msg.debug) console.log(`[worker] load rg ${msg.rg} converted ${(performance.now() - t0).toFixed(0)} ms`)
       self.postMessage(
         { type: 'loaded', id: msg.id, url: msg.url, rg: msg.rg, bytes: rg.bytes, ms: performance.now() - t0, ...bin },

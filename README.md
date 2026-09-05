@@ -41,6 +41,7 @@
 
 - **変換スクリプト** (`scripts/`): PDAL / untwine / GDAL / DuckDB で LAS から全形式を生成する。`build.ps1` で一括
 - **GeoParquet ブラウザビューア** (`viewer/`): GeoArrow 版を hyparquet + deck.gl で開き、footer の row group 統計だけで画面内の row group を Range request で部分読みする。2.92 GB を変換せずに表示できる。LOD は無い
+- **MapLibre 版** (`viewer/maplibre.html`): 同じ仕組みで読んだ点を Worker 内で proj4 により EPSG:6677 → WGS84 に変換し、deck.gl の `MapboxOverlay` で地理院タイルの上に重ねる。MapLibre 自体は GeoParquet を読めないのでこの構成になる ([REPORT 10 章](REPORT.md#maplibre-版-viewermaplibrehtml2026-09-06))
 - **PCP 変換** (`scripts/build_pcp.py`): GeoArrow 版を Morton 順 + additive voxel LOD の Parquet に並べ替え、[kanahiro.github.io/pcp](https://kanahiro.github.io/pcp/) で開けるようにする。R2 に置いた [全体 2.3 GB](https://shi-works.com/geoparquet/pcp/09jc602_pcp.parquet) は初期表示 0.9 MB の読み込みで済む
 
 ![自作ビューア。緑の枠が読み込み済みの row group](docs/images/viewer_detail_elevation.png)
@@ -55,7 +56,7 @@
 .\scripts\build_geoarrow.ps1                 # GeoArrow struct 版 (OSGeo4W の GDAL 3.13)
 duckdb -c ".read viewer/make_overview.sql"   # ビューア用の 1% サンプル
 python scripts/copy_geo_metadata.py data/09jc602_geoarrow.parquet data/09jc602_geoarrow_overview.parquet   # サンプルを QGIS でも開けるように
-python viewer/serve.py                       # http://127.0.0.1:8080/viewer/
+python viewer/serve.py                       # http://127.0.0.1:8080/viewer/ (MapLibre 版は /viewer/maplibre.html)
 python scripts/build_pcp.py data/09jc602_geoarrow.parquet data/09jc602_pcp.parquet   # PCP (約 5 分半)
 ```
 
@@ -66,7 +67,7 @@ python scripts/build_pcp.py data/09jc602_geoarrow.parquet data/09jc602_pcp.parqu
 
 ```
 scripts/        変換・検証スクリプト (PDAL パイプライン, DuckDB SQL, PCP 変換, R2 アップロード)
-viewer/         GeoParquet ビューア (index.html, app.js, worker.js, serve.py) と puppeteer テスト (dev/)
+viewer/         GeoParquet ビューア (index.html, app.js) と MapLibre 版 (maplibre.html, maplibre.js)。worker.js / points.js を共用。puppeteer テストは dev/
 experiments/    ALP エンコードの検証、COPC 生成時間の切り分け (results/ にログ)
 docs/images/    スクリーンショット
 REPORT.md       作業記録の全文 (入力データ、環境、手順、計測、ビューア調査、PCP、残課題)

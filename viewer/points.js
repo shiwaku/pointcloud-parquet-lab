@@ -62,8 +62,11 @@ function num(v) {
  * @param {Array<{columnName: string, rowStart: number, columnData: any[]}>} chunks
  * @param {number[]} center [cx, cy, cz]
  * @param {number} colorShift RGB が 16 bit なら 8、8 bit なら 0
+ * @param {{transform?: (x:number, y:number) => number[], float64?: boolean}} [opts]
+ *   transform: 平面座標 → [経度, 緯度] (MapLibre 版で使う。z はそのまま)。
+ *   float64: positions を Float64Array にする (経緯度は Float32 だと 1 m 程度しか精度が無い)
  */
-export function chunksToBinary(chunks, center, colorShift = 0) {
+export function chunksToBinary(chunks, center, colorShift = 0, opts = {}) {
   const geom = collect(chunks, 'geometry')
   if (!geom) throw new Error('geometry 列が無い')
   const n = geom.length
@@ -71,15 +74,18 @@ export function chunksToBinary(chunks, center, colorShift = 0) {
   const G = collect(chunks, 'Green')
   const B = collect(chunks, 'Blue')
   const C = collect(chunks, 'Classification')
-  const positions = new Float32Array(n * 3)
+  const positions = opts.float64 ? new Float64Array(n * 3) : new Float32Array(n * 3)
   const rgb = new Uint8Array(n * 3)
   const cls = new Uint8Array(n)
   const [cx, cy, cz] = center
+  const transform = opts.transform
   let zmin = Infinity, zmax = -Infinity
   for (let i = 0; i < n; i++) {
     const p = geom[i]
-    positions[3 * i] = p.x - cx
-    positions[3 * i + 1] = p.y - cy
+    let x = p.x, y = p.y
+    if (transform) [x, y] = transform(x, y)
+    positions[3 * i] = x - cx
+    positions[3 * i + 1] = y - cy
     positions[3 * i + 2] = p.z - cz
     if (p.z < zmin) zmin = p.z
     if (p.z > zmax) zmax = p.z

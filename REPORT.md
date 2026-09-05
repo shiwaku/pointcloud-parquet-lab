@@ -99,9 +99,11 @@ GeoParquet そのままでも row group 単位の部分読みは効く ([10 章]
 ├── experiments/copc/       COPC 生成時間の切り分け (writers.copc の点数スケーリング vs untwine)
 ├── viewer/                 GeoParquet 点群ビューア (deck.gl + hyparquet)
 │   ├── index.html / app.js / worker.js / points.js
+│   ├── maplibre.html / maplibre.js   MapLibre の地図に重ねる版 (worker.js / points.js を共用)
 │   ├── serve.py              Range 対応の静的サーバ
 │   ├── make_overview.sql     概観用 1% サンプルを作る DuckDB SQL
 │   ├── dev/test_viewer.mjs   puppeteer での動作確認
+│   ├── dev/test_maplibre.mjs MapLibre 版の動作確認
 │   └── dev/test_pcp.mjs      PCP ビューアで R2 上のファイルを開く確認
 ├── docs/images/            スクリーンショット
 └── data/                   点群と生成物 (git 管理外。合計 40 GB 弱)
@@ -789,6 +791,39 @@ python viewer/serve.py                       # http://127.0.0.1:8080/viewer/ を
 動作確認は puppeteer + headless Chrome で行った (`viewer/dev/test_viewer.mjs`)。
 headless では `--use-angle=d3d11` を付けないとソフトウェア GL になり、数百万点の描画で
 1 フレームに数十秒かかる。
+
+### MapLibre 版 (viewer/maplibre.html、2026-09-06)
+
+MapLibre GL JS は GeoParquet を読めない (対応するのはベクタタイル・GeoJSON・ラスタ) ので、
+同じ Worker で row group を部分読みし、deck.gl の `MapboxOverlay` で MapLibre の地図に重ねる形にした。
+`python viewer/serve.py` を起動して http://127.0.0.1:8080/viewer/maplibre.html を開く。
+
+![MapLibre + 地理院タイル (写真) に詳細 8 row group (800 万点) を重ねた](docs/images/maplibre_detail_rgb.png)
+
+![概観 1% サンプルを標高で色付けし、陰影起伏図に重ねて位置を確認](docs/images/maplibre_overview_elev_hillshade.png)
+
+- **座標変換は Worker 内で proj4js**。GeoParquet の `geo` メタデータ (PROJJSON) の EPSG コードから
+  平面直角座標系 I〜XIX (EPSG:6669〜6687) の proj4 文字列を組み、点ごとに経緯度へ変換する。
+  他の CRS は `?proj=` で proj4 文字列を渡す。1 row group (100 万点) の読み込み + 変換で 2.4〜2.5 秒
+  (index.html 版は変換無しで 1.3〜2.3 秒)
+- **経緯度は Float64 で渡す**。Float32 の経度 139° は刻みが約 1 m で、点群がグリッド状に潰れる。
+  deck.gl の位置属性は Float64Array を受け取ると内部で high/low の 2 本の Float32 に分けて精度を保つ。
+  メモリは 2 倍 (800 万点で 192 MB)
+- deck.gl 側の座標系は `LNGLAT`、z は標高 (m) をそのまま入れる。MapLibre を傾けると (pitch) 点群が立ち上がる。
+  地形 (terrain) は載せていないので、写真タイルは平面のまま
+- **詳細 row group の選択**は bbox の 4 隅を経緯度にして `map.project` で画面矩形にする方法に変えた。
+  解像度の閾値は zoom と緯度から px/m を計算して index.html 版と同じ値で判定する
+- 背景は地理院タイル (淡色・標準・写真・陰影起伏図)。透過率を変えられる。位置合わせの確認には
+  標高色 + 陰影起伏図が分かりやすい (上の 2 枚目。谷筋・尾根が一致する)
+- 位置の妥当性: 変換後の範囲は北緯 36.0915〜36.1052°、東経 138.9670〜138.9894° (群馬県南西部の山地)。
+  標高 428〜878 m とも整合する。LAS の X が easting、Y が northing で入っている (平面直角座標系の
+  数学的な X = northing ではなく GIS の順) ことの確認にもなった
+- **MapLibre 単体で GeoParquet を表示する方法は無い**。用途が「地図上に点を置く」だけなら、
+  DuckDB で GeoJSON や FlatGeobuf に出すか、tippecanoe で PMTiles にするのが普通。2.5 億点の点群を
+  そのまま重ねるならこの構成 (parquet を Range で部分読み + deck.gl) になる
+
+動作確認は `viewer/dev/test_maplibre.mjs` (puppeteer)。概観 250 万点の表示 4.8 秒 (index.html 版 2.2 秒。
+経緯度変換の分)、詳細 8 row group 800 万点 5.5 秒。
 
 ## 11. PCP (Point Cloud Parquet) への変換と R2 配置
 
