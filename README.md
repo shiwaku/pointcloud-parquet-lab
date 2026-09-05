@@ -41,7 +41,7 @@
 
 - **変換スクリプト** (`scripts/`): PDAL / untwine / GDAL / DuckDB で LAS から全形式を生成する。`build.ps1` で一括
 - **GeoParquet ブラウザビューア** (`viewer/`): GeoArrow 版を hyparquet + deck.gl で開き、footer の row group 統計だけで画面内の row group を Range request で部分読みする。2.92 GB を変換せずに表示できる。LOD は無い
-- **QGIS スタイル** (`qgis/`): 標高 8 段と RGB の QML。2D と 3D ビューの設定を含む。3D は `max-chunk-features` を上げないと点群が描かれない ([REPORT 9 章](REPORT.md#3d-表示-2026-09-06))
+- **QGIS スタイル** (`qgis/`): 標高 (10 m 刻み) と RGB の QML。2D と 3D ビューの設定を含む。3D は `max-chunk-features` を上げないと点群が描かれない ([REPORT 9 章](REPORT.md#3d-表示-2026-09-06))
 - **MapLibre 版** (`viewer/maplibre.html`): 同じ仕組みで読んだ点を Worker 内で proj4 により EPSG:6677 → WGS84 に変換し、deck.gl の `MapboxOverlay` で地理院タイルの上に重ねる。MapLibre 自体は GeoParquet を読めないのでこの構成になる ([REPORT 10 章](REPORT.md#maplibre-版-viewermaplibrehtml2026-09-06))
 - **PCP 変換** (`scripts/build_pcp.py`): GeoArrow 版を Morton 順 + additive voxel LOD の Parquet に並べ替え、[kanahiro.github.io/pcp](https://kanahiro.github.io/pcp/) で開けるようにする。R2 に置いた [全体 2.3 GB](https://shi-works.com/geoparquet/pcp/09jc602_pcp.parquet) は初期表示 0.9 MB の読み込みで済む
 

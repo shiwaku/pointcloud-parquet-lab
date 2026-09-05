@@ -697,7 +697,7 @@ headless で描画時間を測った (`scripts/qgis_render.py`。RTX 4060 は使
 
 | ファイル | 2D | 3D |
 |---|---|---|
-| `qgis/geoarrow_elevation.qml` | `$z` を 8 段 (427.77〜877.93 m を等間隔、Viridis) の連続値で色分け | 同じ 8 段をルールベース 3D レンダラで色違いの Cube (0.3 m) に割り当て |
+| `qgis/geoarrow_elevation.qml` | `$z` を 10 m 刻み (420〜880 m の 46 段、Viridis) で色分け。刻みは `--step` で変えられる | 同じ 46 段をルールベース 3D レンダラで色違いの Cube (0.3 m) に割り当て |
 | `qgis/geoarrow_rgb.qml` | `color_rgb("Red","Green","Blue")` で点の色をそのまま (8 bit 前提) | 単色 (灰) の Cube。ベクタレイヤの 3D 点シンボルは点ごとの色を持てない |
 
 - z は属性列ではなく geometry の中にあるので、式は `$z` を使う。wkb 版 (`09jc602_zstd.parquet`) でも同じ QML が効く
@@ -716,7 +716,7 @@ QML では 5,000,000 にしてある (GUI ではレイヤプロパティ → 3D 
 
 | レイヤ | 点数 | 3D 表示 |
 |---|---|---|
-| `09jc602_geoarrow_200m.parquet` (200 m 四方、全点) | 2,121,894 | 標高ルール 8 色の Cube、カメラ移動から 30 秒以内に全点 |
+| `09jc602_geoarrow_200m.parquet` (200 m 四方、全点) | 2,121,894 | 標高ルールの Cube、カメラ移動から 30 秒以内に全点 (8 段版で計測。46 段版はルール数が増えるだけで同じ経路) |
 | `09jc602_geoarrow_overview_200m.parquet` (200 m 四方、1%) | 20,738 | 数秒 |
 | `09jc602_geoarrow.parquet` (全体) | 249,880,253 | 実用外。3D ビューは 3D マップの範囲内の点を全部読もうとする |
 

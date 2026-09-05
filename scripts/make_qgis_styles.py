@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """GeoParquet 点群 (09jc602_geoarrow.parquet / 同 _overview.parquet) 用の QGIS スタイル (QML) を作る。
 
-  "C:/Program Files/QGIS 4.0.0/bin/python-qgis.bat" scripts/make_qgis_styles.py [data/09jc602_geoarrow.parquet]
+  "C:/Program Files/QGIS 4.0.0/bin/python-qgis.bat" scripts/make_qgis_styles.py [data/09jc602_geoarrow.parquet] [--step 10] [--styles elevation,rgb]
 
 出力 (qgis/):
-  geoarrow_elevation.qml  標高 ($z) で 8 段の色分け (Viridis)。2D は連続値グラデーション、
-                          3D は同じ 8 段をルールベース 3D レンダラで Cube に割り当てる
+  geoarrow_elevation.qml  標高 ($z) を --step m 刻み (既定 10 m。境界は 10 の倍数に揃える) で色分け (Viridis)。
+                          09jc602 (427.77〜877.93 m) では 420〜880 m の 46 段。
+                          2D は段階色、3D は同じ段をルールベース 3D レンダラで Cube に割り当てる
   geoarrow_rgb.qml        2D は color_rgb("Red","Green","Blue") で点の色をそのまま出す。
                           3D はベクタレイヤの点シンボルに点ごとの色を付ける手段が無いので単色 (灰) の Cube
                           (3D で RGB を見たいなら COPC を点群レイヤで開く)
@@ -16,6 +17,8 @@ QML は QGIS の「レイヤ → プロパティ → スタイル → スタイ�
 「ビュー → 3D マップビュー → 新規 3D マップビュー」。2.5 億点の本体を 3D に載せるのは無理なので、
 1% サンプルか、範囲を絞った GeoParquet (200 m 四方 212 万点で約 1 分) に当てる。
 """
+import argparse
+import math
 import os
 import sys
 
@@ -29,7 +32,6 @@ from qgis.PyQt.QtGui import QColor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(os.path.dirname(HERE), "qgis")
-N_CLASSES = 8
 CUBE_SIZE = 0.3        # m。本体 (約 11 cm 間隔) では隙間が埋まり、1% サンプル (約 1 m 間隔) では点として見える
 # 3D のタイル分割。既定の max-chunk-features=1000 だと、1 チャンクに 1,000 点を超える点群は 3D に何も描かれない
 # (QGIS 4.0.0 で確認。エラーも出ない)。点群では必ず超えるので大きくする。zoom-levels-count は既定の 3
@@ -74,18 +76,21 @@ def z_range(layer):
     return 427.77, 877.93
 
 
-def elevation_style(layer, zmin, zmax):
+def elevation_style(layer, zmin, zmax, step):
+    """zmin〜zmax を step m 刻みで分ける。境界は step の倍数に揃える (430, 440, …)"""
     ramp = QgsStyle.defaultStyle().colorRamp("Viridis")
-    step = (zmax - zmin) / N_CLASSES
+    lo0 = math.floor(zmin / step) * step
+    n = int(math.ceil((zmax - lo0) / step))
     ranges = []
     rules = QgsRuleBased3DRenderer.Rule(None)
-    for i in range(N_CLASSES):
-        lo, hi = zmin + i * step, zmin + (i + 1) * step
-        color = ramp.color((i + 0.5) / N_CLASSES)
-        label = f"{lo:.0f} - {hi:.0f} m"
+    for i in range(n):
+        lo, hi = lo0 + i * step, lo0 + (i + 1) * step
+        color = ramp.color((i + 0.5) / n)
+        label = f"{lo:g} - {hi:g} m"
         ranges.append(QgsRendererRange(lo, hi, marker(color), label))
-        rule = QgsRuleBased3DRenderer.Rule(cube(color), f'$z >= {lo:.2f} AND $z {"<=" if i == N_CLASSES - 1 else "<"} {hi:.2f}', label)
+        rule = QgsRuleBased3DRenderer.Rule(cube(color), f'$z >= {lo:g} AND $z {"<=" if i == n - 1 else "<"} {hi:g}', label)
         rules.appendChild(rule)
+    print(f"elevation: {n} classes, {lo0:g}..{lo0 + n * step:g} m, step {step:g} m")
     r2d = QgsGraduatedSymbolRenderer("$z", ranges)
     r2d.setSourceSymbol(marker())
     r2d.setSourceColorRamp(ramp)
@@ -107,7 +112,13 @@ def rgb_style(layer):
 
 
 def main():
-    path = sys.argv[1] if len(sys.argv) > 1 else "data/09jc602_geoarrow.parquet"
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("input", nargs="?", default="data/09jc602_geoarrow.parquet")
+    ap.add_argument("--step", type=float, default=10.0, help="標高の刻み (m)。既定 10")
+    ap.add_argument("--styles", default="elevation,rgb", help="作るスタイル (カンマ区切り)。既定 elevation,rgb")
+    args = ap.parse_args()
+    path = args.input
+    styles = [x.strip() for x in args.styles.split(",") if x.strip()]
     QgsApplication.setPrefixPath(os.environ.get("QGIS_PREFIX_PATH", r"C:\Program Files\QGIS 4.0.0\apps\qgis"), True)
     app = QgsApplication([], False)
     app.initQgis()
@@ -118,15 +129,16 @@ def main():
     print(f"{path}: {layer.featureCount():,} features, z {zmin:.2f}..{zmax:.2f}")
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    elevation_style(layer, zmin, zmax)
-    out = os.path.join(OUT_DIR, "geoarrow_elevation.qml")
-    msg, ok = layer.saveNamedStyle(out)
-    print(("saved " if ok else "FAILED ") + out, msg if not ok else "")
-
-    rgb_style(layer)
-    out = os.path.join(OUT_DIR, "geoarrow_rgb.qml")
-    msg, ok = layer.saveNamedStyle(out)
-    print(("saved " if ok else "FAILED ") + out, msg if not ok else "")
+    if "elevation" in styles:
+        elevation_style(layer, zmin, zmax, args.step)
+        out = os.path.join(OUT_DIR, "geoarrow_elevation.qml")
+        msg, ok = layer.saveNamedStyle(out)
+        print(("saved " if ok else "FAILED ") + out, msg if not ok else "")
+    if "rgb" in styles:
+        rgb_style(layer)
+        out = os.path.join(OUT_DIR, "geoarrow_rgb.qml")
+        msg, ok = layer.saveNamedStyle(out)
+        print(("saved " if ok else "FAILED ") + out, msg if not ok else "")
     app.exitQgis()
 
 
