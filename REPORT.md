@@ -689,6 +689,54 @@ headless で描画時間を測った (`scripts/qgis_render.py`。RTX 4060 は使
 
 ![QGIS で全域 (1% サンプル 250 万点、5.7 秒)](docs/images/qgis_overview_full.png)
 
+![QGIS で 100 m 四方を RGB で表示 (`qgis/geoarrow_rgb.qml`、4.5 秒)](docs/images/qgis_geoarrow_rgb_100m.png)
+
+#### QML (qgis/)
+
+`scripts/make_qgis_styles.py` (QGIS 4.0 の `python-qgis.bat` で実行) が作る。QGIS の「レイヤ → プロパティ → スタイル → スタイルの読み込み」で当てる。
+
+| ファイル | 2D | 3D |
+|---|---|---|
+| `qgis/geoarrow_elevation.qml` | `$z` を 8 段 (427.77〜877.93 m を等間隔、Viridis) の連続値で色分け | 同じ 8 段をルールベース 3D レンダラで色違いの Cube (0.3 m) に割り当て |
+| `qgis/geoarrow_rgb.qml` | `color_rgb("Red","Green","Blue")` で点の色をそのまま (8 bit 前提) | 単色 (灰) の Cube。ベクタレイヤの 3D 点シンボルは点ごとの色を持てない |
+
+- z は属性列ではなく geometry の中にあるので、式は `$z` を使う。wkb 版 (`09jc602_zstd.parquet`) でも同じ QML が効く
+- Red / Green / Blue は 8 bit。16 bit のファイルに当てるときは `color_rgb("Red"/257, …)` にする
+- 3D の設定 (シンボル、altitude clamping = Absolute、タイル分割) も QML に含まれる
+
+#### 3D 表示 (2026-09-06)
+
+「ビュー → 3D マップビュー → 新規 3D マップビュー」でベクタレイヤの点を Cube として立体表示できる。
+ただし **既定のままでは何も描かれない**。原因は 3D レンダラのタイル分割設定 `max-chunk-features` (既定 1,000) で、
+1 チャンクにこれを超える点があると、そのチャンクはエラーも出さずに描かれない。点群は必ず超える。
+QML では 5,000,000 にしてある (GUI ではレイヤプロパティ → 3D ビュー のチャンク上限)。
+
+切り分けの経緯: メモリレイヤの 500 点は描ける、同じ 3D シンボルで GeoParquet 2 万点・WKB 版 GeoParquet・GeoPackage は描けない、
+メモリレイヤでも 2,000 点にすると描けない、`max-chunk-features` を 100 万にすると GeoParquet 2 万点が描ける、で確定した。
+
+| レイヤ | 点数 | 3D 表示 |
+|---|---|---|
+| `09jc602_geoarrow_200m.parquet` (200 m 四方、全点) | 2,121,894 | 標高ルール 8 色の Cube、カメラ移動から 30 秒以内に全点 |
+| `09jc602_geoarrow_overview_200m.parquet` (200 m 四方、1%) | 20,738 | 数秒 |
+| `09jc602_geoarrow.parquet` (全体) | 249,880,253 | 実用外。3D ビューは 3D マップの範囲内の点を全部読もうとする |
+
+3D に載せるのは範囲を絞った GeoParquet (DuckDB で `WHERE geometry.x BETWEEN …` で切り出し、`copy_geo_metadata.py` で `geo` を付ける) か
+1% サンプルにする。3D マップの「範囲」(3D ビュー設定の Extent) の外の点は読まれないので、そこで絞ってもよい。
+
+![GeoParquet 212 万点を QGIS の 3D ビューで標高ルール表示 (`qgis/geoarrow_elevation.qml`)](docs/images/qgis3d_geoarrow_elevation.png)
+
+![同じレイヤに寄ったところ。0.3 m の Cube](docs/images/qgis3d_geoarrow_elevation_close.png)
+
+**3D で RGB を出したいなら COPC を点群レイヤで開く。** ベクタレイヤの 3D 点シンボルは Phong マテリアルの色がレイヤ (ルール) 単位で、
+点ごとの `color_rgb` は使えない。点群レイヤ (LAS/LAZ/COPC) は 3D の RGB レンダラを持ち、2.5 億点の
+`09jc602_untwine.copc.laz` をそのまま開いてカメラを寄せれば数秒で表示される (下図)。同じ 3D ビューに GeoParquet の
+ベクタレイヤと COPC の点群レイヤを重ねることもできる。
+
+![COPC (untwine 版) を QGIS の点群レイヤとして開き、3D ビューで RGB 表示](docs/images/qgis3d_copc_rgb.png)
+
+QGIS 4.0.0 の Python には `QgsOffscreen3DEngine` が無く headless で 3D を描けないため、確認は QGIS デスクトップを
+`--code` で起動して 3D キャンバスをスクリーンから取る方法で行った (`scripts/qgis_3d_capture.py`)。
+
 ### Parquet で LOD 配信するビューアの例
 
 `docs/images/reference_parquet_field_viewer.png` (第三者の UI なので git 管理外) は、Parquet を直接ブラウザで読んで

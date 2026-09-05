@@ -35,12 +35,13 @@
 | Web 配信・ビューア | COPC (生成は untwine)。Parquet で揃えたいなら PCP |
 | DuckDB spatial の `ST_*` で集計・結合 | GeoParquet (ZSTD + wkb) |
 | 座標を数値として扱う、bbox 抽出、容量も抑える | GeoParquet (ZSTD + GeoArrow struct)。DuckDB spatial 1.1.3 では読めない |
-| GDAL / QGIS から読む | どの GeoParquet でも可。QGIS では 200 m 四方の表示が 5.5 秒、全域は 1% サンプルで ([REPORT 9 章](REPORT.md#qgis-で開く-2026-09-06)) |
+| GDAL / QGIS から読む | どの GeoParquet でも可。QGIS では 200 m 四方の表示が 5.5 秒、全域は 1% サンプルで。3D ビューも範囲を絞れば可 (標高色)。3D で RGB なら COPC ([REPORT 9 章](REPORT.md#qgis-で開く-2026-09-06)) |
 
 ## 作ったもの
 
 - **変換スクリプト** (`scripts/`): PDAL / untwine / GDAL / DuckDB で LAS から全形式を生成する。`build.ps1` で一括
 - **GeoParquet ブラウザビューア** (`viewer/`): GeoArrow 版を hyparquet + deck.gl で開き、footer の row group 統計だけで画面内の row group を Range request で部分読みする。2.92 GB を変換せずに表示できる。LOD は無い
+- **QGIS スタイル** (`qgis/`): 標高 8 段と RGB の QML。2D と 3D ビューの設定を含む。3D は `max-chunk-features` を上げないと点群が描かれない ([REPORT 9 章](REPORT.md#3d-表示-2026-09-06))
 - **MapLibre 版** (`viewer/maplibre.html`): 同じ仕組みで読んだ点を Worker 内で proj4 により EPSG:6677 → WGS84 に変換し、deck.gl の `MapboxOverlay` で地理院タイルの上に重ねる。MapLibre 自体は GeoParquet を読めないのでこの構成になる ([REPORT 10 章](REPORT.md#maplibre-版-viewermaplibrehtml2026-09-06))
 - **PCP 変換** (`scripts/build_pcp.py`): GeoArrow 版を Morton 順 + additive voxel LOD の Parquet に並べ替え、[kanahiro.github.io/pcp](https://kanahiro.github.io/pcp/) で開けるようにする。R2 に置いた [全体 2.3 GB](https://shi-works.com/geoparquet/pcp/09jc602_pcp.parquet) は初期表示 0.9 MB の読み込みで済む
 
@@ -69,6 +70,7 @@ python scripts/build_pcp.py data/09jc602_geoarrow.parquet data/09jc602_pcp.parqu
 scripts/        変換・検証スクリプト (PDAL パイプライン, DuckDB SQL, PCP 変換, R2 アップロード)
 viewer/         GeoParquet ビューア (index.html, app.js) と MapLibre 版 (maplibre.html, maplibre.js)。worker.js / points.js を共用。puppeteer テストは dev/
 experiments/    ALP エンコードの検証、COPC 生成時間の切り分け (results/ にログ)
+qgis/           QGIS 用 QML (標高 / RGB)。scripts/make_qgis_styles.py が生成
 docs/images/    スクリーンショット
 REPORT.md       作業記録の全文 (入力データ、環境、手順、計測、ビューア調査、PCP、残課題)
 ```
