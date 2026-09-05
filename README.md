@@ -390,7 +390,7 @@ LAS を直接読むのは PDAL の 3 本と untwine だけ。
 | `09jc602_int32_delta.parquet` (ALP B) | pyarrow (`alp_experiment_pyarrow.py`) | ALP A | 同上 INT32 | ZSTD。座標 DELTA_BINARY_PACKED、GpsTime BYTE_STREAM_SPLIT、他 PLAIN | 250 個 | スキャン順 | 無し | 同上 | 2.85 GB |
 | `09jc602_double_bss.parquet` (ALP C) | pyarrow | `09jc602_geoarrow.parquet` (struct を平坦化) | `x` `y` `z` double 平坦列 | ZSTD。座標・GpsTime BYTE_STREAM_SPLIT | 250 個 | スキャン順 | 無し | 同上 | 4.60 GB |
 | `09jc602_int32_delta_dict.parquet` (ALP D) | pyarrow | ALP A | INT32 | ZSTD。座標 DELTA_BINARY_PACKED、属性 RLE_DICTIONARY | 250 個 | スキャン順 | 無し | 同上 | 2.42 GB |
-| `09jc602_pcp.parquet` | `scripts/build_pcp.py` (DuckDB `pcp_sort.sql` でソート → pyarrow で書き出し) | `09jc602_geoarrow.parquet` | `x` `y` `z` INT32 量子化 (×100、`scale`/`offset` で復元)。`red` `green` `blue` UINT16 (8 bit 値 × 257) | ZSTD。座標 DELTA_BINARY_PACKED、他 RLE_DICTIONARY。`gps_time` は既定で削除 | 3,819 個 (65,536 点、レベル境界をまたがない) | **Morton 順 + LOD レベル順** | `point_cloud` JSON (scale, offset, bounds, level_row_group_ends …)。`geo` も CRS も無し | kanahiro.github.io/pcp のみ (GeoParquet ではない) | 2.32 GB |
+| `09jc602_pcp.parquet` | `scripts/build_pcp.py` (DuckDB `pcp_sort.sql` でソート → pyarrow で書き出し) | `09jc602_geoarrow.parquet` | `x` `y` `z` INT32 量子化 (×100、`scale`/`offset` で復元)。`red` `green` `blue` UINT16 (8 bit 値 × 257) | ZSTD。座標 DELTA_BINARY_PACKED、他 RLE_DICTIONARY。`gps_time` は既定で削除 | 3,821 個 (65,536 点、レベル境界をまたがない) | **Morton 順 + LOD レベル順** | `point_cloud` JSON (scale, offset, bounds, level_row_group_ends, voxel_edge_ratio, crs = PROJJSON)。`geo` は無し | kanahiro.github.io/pcp のみ (GeoParquet ではない) | 2.32 GB |
 | `09jc602_pcp_test.parquet` | 同上 `--where` で 200 m 四方 | 同上 | 同上 | 同上 | 39 個 | 同上 | 同上 | 同上 | 19 MB |
 
 `*.parquet.sql` (`data/09jc602_pcp.parquet.sql` など) は `build_pcp.py` が実行時に展開した DuckDB SQL の写し。
@@ -401,10 +401,10 @@ LAS を直接読むのは PDAL の 3 本と untwine だけ。
 |---|---|---|
 | 規格 | OGC GeoParquet 1.0 / 1.1。`geo` メタデータで geometry 列・エンコード・CRS を宣言する | kanahiro.github.io/pcp の独自レイアウト。仕様書は非公開で、ビューアの worker とデモデータから要件を読み取った |
 | 座標 | double の world 座標。WKB (BLOB) か GeoArrow struct<x,y,z> | INT32 の量子化値 + `scale` / `offset`。LAS と同じ考え方 |
-| CRS | EPSG:6677 をメタデータに持つ | 概念が無い。座標をそのまま描く |
+| CRS | `geo` メタデータに EPSG:6677 | `point_cloud.crs` に PROJJSON で持つ (ビューアは検証するだけで座標はそのまま描く) |
 | 点の並び | LAS のスキャン順のまま。row group は 100 万点ずつ機械的に切っただけ | 3D Morton (Z-order) 順。空間的に近い点が連続する |
-| LOD | 無い。全点が 1 段階 | additive voxel LOD。L0 (40.96 m ボクセル) 〜 L9 (8 cm) + 余りの 11 段。各点はちょうど 1 レベルに属し、粗いレベルから累積して描く |
-| row group | 250 個 × 100 万点。1 つの bbox がタイル境目で 2 km に広がることがある | 3,819 個 × 65,536 点。レベルごとに区切り、Morton 順なので bbox が小さくまとまる |
+| LOD | 無い。全点が 1 段階 | additive voxel LOD。L0 (40.96 m ボクセル) 〜 L11 (2 cm) + 余り (1 cm) の 13 段。各点はちょうど 1 レベルに属し、粗いレベルから累積して描く |
+| row group | 250 個 × 100 万点。1 つの bbox がタイル境目で 2 km に広がることがある | 3,821 個 × 65,536 点。レベルごとに区切り、Morton 順なので bbox が小さくまとまる |
 | 読み飛ばし | row group 統計 (x/y/z の min/max) で bbox 枝刈り | 同じ統計に加え `level_row_group_ends` で「どのレベルまで読むか」を画面上の誤差 (SSE) で決める |
 | 属性 | LAS の全ディメンションを保持 | 列としては残すが PCP は x, y, z, red, green, blue しか読まない。`gps_time` は Morton 順で圧縮が効かないので既定で落とす |
 | 読めるツール | GDAL / QGIS / DuckDB / pyarrow / 自作ビューア | PCP ビューアだけ。DuckDB や pyarrow では「x, y, z 列を持つ普通の表」として読める |
@@ -749,7 +749,9 @@ LOD でストリーミング表示するデモ。GeoParquet ではなく独自�
 
 仕様書は公開されていない (リポジトリ非公開) ため、ページの worker
 (`point-cloud.worker-*.js`) とデモデータ (`cogp-demo.spatialty.io/temp/114112.parquet`,
-parquet-rs 製) から読み取った要件で作っている。
+parquet-rs 製) から読み取った要件で作っている。**要件はビューアの更新で変わる**。
+9/4 に作ったファイルは 9/5 には `Invalid point_cloud metadata` で開けなくなっていた
+(`voxel_edge_ratio` が必須になり、`crs` が文字列不可になった。下記)。
 
 ### PCP が要求するレイアウト
 
@@ -758,10 +760,15 @@ parquet-rs 製) から読み取った要件で作っている。
 | 座標列 | `x` `y` `z` INT32 (量子化)。world = q × scale + offset。row group ごとの min/max 統計が必須 (bbox 枝刈りに使う) |
 | 色列 | `red` `green` `blue` UINT16 (0〜65535)。(0,0,0) は色なし扱いで標高色になる。列が無いとエラー |
 | row group | LOD レベル順 (粗 → 細) に並び、レベル境界をまたがない。列 x〜blue は連続して置く (1 回の range request でまとめて取る) |
-| メタデータ | footer の key_value_metadata `point_cloud` (JSON): `version` "0.1.0", `scale[3]`, `offset[3]`, `bounds[6]`, `level_row_group_ends[]` (レベルごとの row group 終端の累積), `base_voxel_size`, `coarsest_voxel_size`, `hierarchy`, `spatial_order` |
-| LOD | レベル k のボクセル 1 辺 = `coarsest_voxel_size / 2^k`。幾何誤差 = 1 辺 × √3。最終レベルは誤差 0 |
+| メタデータ | footer の key_value_metadata `point_cloud` (JSON)。worker が検証する項目: `version` == "0.1.0", `scale[3]` (全て > 0), `offset[3]`, `bounds[6]`, `level_row_group_ends[]` (レベルごとの row group 終端の累積、0 以上の整数), `voxel_edge_ratio` (整数 ≥ 2), `crs` (null か PROJJSON オブジェクト)。1 つでも外れると `Invalid point_cloud metadata`。知らないキーは無視 |
+| LOD | 全 L レベルのうちレベル t の幾何誤差 = \|scale\| × `voxel_edge_ratio`^(L−1−t)。最終レベルは誤差 0。つまり最細レベルのボクセル 1 辺 = scale、レベル 0 = scale × ratio^(L−1) と解釈される。ファイル側の段数をこれに合わせないと SSE の見積りがずれる |
 | 圧縮 | ZSTD。座標は DELTA_BINARY_PACKED、gps_time は BYTE_STREAM_SPLIT、他は辞書 (デモに合わせた。読むのは hyparquet) |
-| CRS | 概念なし。座標はそのまま描く。`crs` キーを足しても無視されるだけ |
+| CRS | `crs` に PROJJSON (pyproj `CRS.from_epsg(6677).to_json_dict()`) を入れる。座標変換には使われず、そのまま描く |
+
+9/4 時点の worker は `voxel_edge_ratio` を見ず `crs` も検証しなかったので、`base_voxel_size` /
+`coarsest_voxel_size` / `hierarchy` / `spatial_order` と `crs: "EPSG:6677"` を書いていた。
+現行 worker では `voxel_edge_ratio` 欠落と文字列 `crs` の両方で落ちる。
+`build_pcp.py` の `check_point_cloud_meta()` に worker の検証関数を写してあるので、書き出す前に同じ条件で確かめられる。
 
 その他の属性列 (intensity, classification, gps_time など) はデモの列名 (snake_case) に合わせて残しているが、
 PCP は読まない。
@@ -771,14 +778,15 @@ PCP は読まない。
 1. 座標を 0.01 m 格子の整数にし、最小座標からの相対値 (18 bit) を 3D Morton (Z-order) 符号にする
 2. Morton 順にソートすると、どのレベルのボクセルでも同じボクセルの点は連続する
 3. 直前の点とボクセルが異なる最も粗いレベル k にその点を割り当てる (= その点がボクセルの先頭)。
-   どのボクセルレベルでも先頭にならない点は「余り」レベルへ。各点はちょうど 1 レベルに属し、全レベルの和 = 全点
+   どのボクセルレベルでも先頭にならない点 (最小ボクセル 2 cm 内の 2 点目以降 = 1 cm 格子の点) は「余り」レベルへ。
+   各点はちょうど 1 レベルに属し、全レベルの和 = 全点。余りレベルはビューアの「ボクセル = scale の最終レベル」に当たる
 4. `(level, code)` 順に並べ、レベルごとに 65,536 点の row group に切る (Morton 順なので row group は空間的にまとまる)
 
 これは DuckDB の window 関数 1 回 (`lag(code) over (order by code)`) と `xor` で書けるので、
 2.5 億点でも再帰やループ無しで処理できる。ボクセルの代表点はボクセル内の Morton 順先頭 (低い角寄り) で、
 中心に近い点ではない。
 
-レベル構成 (40.96 m 〜 8 cm の 10 段 + 余り):
+レベル構成 (40.96 m 〜 2 cm の 12 段 + 余り。2026-09-05 に 10 段 + 余りから変更):
 
 | レベル | ボクセル | 点数 | row group |
 |---|---|---|---|
@@ -792,7 +800,13 @@ PCP は読まない。
 | L7 | 0.32 m | 84,709,001 | 1,293 |
 | L8 | 0.16 m | 70,900,425 | 1,082 |
 | L9 | 0.08 m | 23,843,033 | 364 |
-| L10 | 余り (8 cm ボクセル内の 2 点目以降) | 5,631,689 | 86 |
+| L10 | 0.04 m | 4,722,342 | 73 |
+| L11 | 0.02 m | 766,494 | 12 |
+| L12 | 余り (2 cm ボクセル内の 2 点目以降) | 142,853 | 3 |
+
+段数を 12 にしたのは、ビューアがレベル 0 の幾何誤差を |scale| × 2^(L−1) と計算するため。
+10 段 + 余り (L = 11) だと L0 のボクセルを 10.24 m とみなし、実際の 40.96 m より 4 倍小さく見積もって
+粗いレベルで止まりやすくなる。12 段 + 余り (L = 13) なら 0.01 × 2^12 = 40.96 m で一致する。
 
 ### 結果
 
@@ -802,9 +816,9 @@ python scripts/build_pcp.py data/09jc602_geoarrow.parquet data/09jc602_pcp.parqu
 
 | 項目 | 値 |
 |---|---|
-| 処理時間 | 7 分 26 秒 (DuckDB ソート 5 分 40 秒、pyarrow 書き出し 1 分 46 秒。メモリ上限 24 GB で spill あり) |
+| 処理時間 | 5 分 32 秒 (DuckDB ソート 4 分 30 秒、pyarrow 書き出し 1 分 02 秒。メモリ上限 24 GB で spill あり。9/4 の初回は 7 分 26 秒) |
 | サイズ | **2.32 GB** (9.3 B/点)。GeoArrow 版 2.92 GB より小さい |
-| row group | 3,819 (65,536 点)、footer 6.9 MB |
+| row group | 3,821 (65,536 点)、footer 6.9 MB |
 | 列内訳 | intensity 0.41 GB / x y z 各 0.3 / RGB 各 0.2 / scan_angle 0.1 |
 
 最初は全列を残して 3.31 GB だった。`gps_time` が 0.99 GB (30%) を占めていたためで、Morton 順に
@@ -822,6 +836,8 @@ PCP で開いた結果 (headless Chrome、ローカル HTTP。`viewer/serve.py` 
 | 初期表示 | 31 万点 (L0〜L6)、1 range request、0.4 MB | 64 万点 (L0〜L3)、11 range request、4.7 MB、約 2 秒 |
 | row group 読み込み | 10 / 39 | 12 / 3,819 |
 
+(9/4 の 11 段構成での計測。13 段構成での R2 経由の結果は下記「R2 への配置」)
+
 ハマりどころ:
 
 - **https のページから `http://127.0.0.1` は読めない**。CORS でも mixed content でもなく Chrome の
@@ -833,7 +849,7 @@ PCP で開いた結果 (headless Chrome、ローカル HTTP。`viewer/serve.py` 
 - PCP は読み込み中に Open を押しても無視する (`ql` フラグ)。自動テストでは既定データの読み込み完了を待ってから URL を差し替える
 - 元の RGB は 8 bit (最大 255)。PCP は 65535 で割るので ×257 で伸長する
 
-### R2 への配置 (2026-09-04)
+### R2 への配置 (2026-09-04、09-05 に再生成分で上書き)
 
 Cloudflare R2 のバケット `shi-works` (Worker 経由で `https://shi-works.com/` から配信。構成と CORS 設定は
 `C:\Users\yshiw\Documents\xserver-cleanup\R2-STRUCTURE.md`) に、AWS CLI の S3 互換 API で置いた
@@ -848,8 +864,26 @@ Cloudflare R2 のバケット `shi-works` (Worker 経由で `https://shi-works.c
 バケットの CORS は既に `AllowedOrigins: *`、`Range` 許可、`Content-Range` 露出で設定済みなので追加設定は不要
 (別バケットに置くときは `scripts/r2_cors.json` を `aws s3api put-bucket-cors` で当てる)。
 
-テストファイルを R2 から PCP で開いた結果 (headless Chrome): 31 万点 (L0〜L6) を 3 秒、転送 2.0 MB、Range 要求 9 回。
-ローカル HTTP より 1 秒ほど遅いだけで、row group 単位の読み飛ばしはそのまま効く。
+R2 から PCP で開いた結果 (headless Chrome、13 段構成、`viewer/dev/test_pcp.mjs`、2026-09-05):
+
+| 項目 | 200 m 四方のテスト (212 万点, 19 MB) | 全体 (2.5 億点, 2.3 GB) |
+|---|---|---|
+| 初期表示 | 83,688 点 (L0〜L5)、Range 要求 5 回、転送 0.56 MB、5 秒 | 115,398 点 (L0〜L2)、Range 要求 3 回、転送 0.87 MB、7 秒 |
+| row group 読み込み | 6 / 41 | 4 / 3,821 |
+| footer | 0.1 MB | 6.9 MB |
+
+全体ファイルの初期表示は footer 6.9 MB + L0〜L2 の 4 row group だけで済み、2.3 GB のうち 0.87 MB しか読まない。
+時間の大半は footer の取得と 3,821 row group の統計の解釈。ローカル HTTP との差は 1〜2 秒。
+
+9/4 の 11 段構成のテストファイルでは 31 万点 (L0〜L6) を 3 秒で表示していた。13 段構成では同じ SSE 閾値 16 px で
+L0〜L5 (8.4 万点) に留まる。これは幾何誤差の見積りが 4 倍大きくなったのではなく、旧構成では 4 倍小さく
+見積もられていた分が正しくなったため (上記「レベル構成」)。細かく見たいときは SSE threshold を下げるか Auto LOD を切る。
+
+**Invalid point_cloud metadata が出たら**: ビューアの worker の検証関数が更新された可能性が高い。
+配信中の `assets/point-cloud.worker-*.js` から `Invalid point_cloud metadata` を投げる関数の直前の判定式を読み、
+`build_pcp.py` の `check_point_cloud_meta()` とメタデータを合わせて再生成する。footer 差し替えだけで済ませたい
+場合は pyarrow の `write_metadata` に既存 row group の統計を渡せば点データを触らずに作れるが、レベル構成の
+ずれは残るので、このリポジトリでは再生成 (約 5 分半 + アップロード 7 分) を選んだ。
 
 ### PCP ビューア側の仕組み (配信中の JS から読み取ったもの)
 
@@ -864,7 +898,7 @@ Cloudflare R2 のバケット `shi-works` (Worker 経由で `https://shi-works.c
 ## 12. 未着手・残課題
 
 - CRS EPSG:6677 はファイル名と座標値からの推定。確定情報があれば全形式を再生成する
-- R2 に置いた全体の PCP (2.32 GB) を kanahiro.github.io/pcp で開く動作確認。200 m 四方のテストファイルは確認済み、全体はローカル HTTP でのみ確認
+- PCP ビューアの検証ルールが再び変わったら `build_pcp.py` を合わせて再生成する (9/5 の `voxel_edge_ratio` / PROJJSON `crs` の例。仕様書が無いので追随するしかない)
 - 「xyz 削除のみ (Snappy)」のサイズは未実測 (推定 6.1 GB)
 - 09jc602 を LOD レベル別 row group に並べ直し、ビューアに中間解像度を持たせる
 - ビューアで wkb 版 (`09jc602_zstd.parquet`) も読めるようにする (WKB を Worker で解く)

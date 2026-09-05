@@ -2,18 +2,25 @@
 """GeoArrow GeoParquet → PCP (Point Cloud Parquet) 変換。
 
 PCP は https://kanahiro.github.io/pcp/ が読む点群 Parquet のレイアウト。
-仕様書は公開されていないので、ビューアの worker (point-cloud.worker-*.js) と
-デモファイル (cogp-demo.spatialty.io/temp/114112.parquet) から読み取った要件で作る:
+仕様書は公開されていないので、ビューアの worker (point-cloud.worker-*.js) の検証関数と
+デモファイル (cogp-demo.spatialty.io/temp/114112.parquet) から読み取った要件で作る
+(2026-09-05 時点の worker-DuCwropK.js。9/4 までの版は voxel_edge_ratio を要求せず crs も文字列で通った):
 
   * 列 x, y, z は INT32 の量子化座標。world = q * scale + offset
   * 列 red, green, blue は UINT16 (0..65535)。(0,0,0) は「色なし」扱い
   * row group は LOD レベル順 (粗 → 細) に並び、レベル境界をまたがない
   * 各 row group の x/y/z に min/max 統計が必要 (bbox による枝刈りに使う)
-  * footer の key_value_metadata に "point_cloud" (JSON):
-      version "0.1.0", scale[3], offset[3], bounds[6] (world),
-      level_row_group_ends[] (レベルごとの row group 終端インデックス、累積),
-      base_voxel_size, coarsest_voxel_size, hierarchy (文字列), spatial_order (文字列)
-    レベル k のボクセル 1 辺 = coarsest_voxel_size / 2^k、幾何誤差 = ボクセル 1 辺 × √3
+  * footer の key_value_metadata に "point_cloud" (JSON)。ビューアが検証する項目:
+      version == "0.1.0"
+      scale[3] (全て > 0), offset[3], bounds[6] (world, xmin ymin zmin xmax ymax zmax)
+      level_row_group_ends[] (レベルごとの row group 終端インデックス、累積。空レベルは前と同じ値)
+      voxel_edge_ratio (整数 >= 2。隣接レベル間のボクセル 1 辺の比)
+      crs (null か PROJJSON オブジェクト。"EPSG:6677" のような文字列は不可)
+    知らないキーは無視される。
+    ビューアはレベル t (全 L レベル) の幾何誤差を |scale| × voxel_edge_ratio^(L-1-t) と計算する
+    (最後のレベルは 0)。つまり最細レベルのボクセル 1 辺 = scale で、レベル 0 のボクセルは
+    scale × ratio^(L-1)。このスクリプトの余りレベル (最小ボクセル内の 2 点目以降) が最後のレベルに
+    当たるので、ボクセル段数 N_VOXEL_LEVELS = COARSEST_SHIFT にして 1 辺が scale × 2 まで下りるようにする
 
 使い方 (リポジトリルートで):
   python scripts/build_pcp.py data/09jc602_geoarrow.parquet data/09jc602_pcp.parquet
@@ -35,14 +42,16 @@ import duckdb
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pyproj
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SQL_TEMPLATE = os.path.join(HERE, "pcp_sort.sql")
 
 SCALE = 0.01                 # LAS と同じ 0.01 m 格子
+VOXEL_EDGE_RATIO = 2         # 隣接レベルのボクセル 1 辺の比 (Morton の 1 ビット = 2 倍)
 COARSEST_SHIFT = 12          # レベル 0 のボクセル = 2^12 格子単位 = 40.96 m
-N_VOXEL_LEVELS = 10          # 40.96, 20.48, ... 0.08 m の 10 段。11 段目は余り
-CRS = "EPSG:6677"
+N_VOXEL_LEVELS = COARSEST_SHIFT   # 40.96, 20.48, ... 0.02 m の 12 段。13 段目は余り (ボクセル = SCALE = 0.01 m)
+CRS_EPSG = 6677              # PROJJSON は pyproj で生成する
 
 # 出力スキーマ (デモファイルの列名・型に合わせる。LAS 1.2 PDRF3 に無い列は省く)
 SCHEMA = pa.schema([
@@ -127,14 +136,14 @@ def stage2_write(args, sorted_path, qbounds):
         "offset": [0.0, 0.0, 0.0],
         "bounds": [xmin * SCALE, ymin * SCALE, zmin * SCALE, xmax * SCALE, ymax * SCALE, zmax * SCALE],
         "level_row_group_ends": ends,
-        "base_voxel_size": SCALE,
-        "coarsest_voxel_size": SCALE * (1 << COARSEST_SHIFT),
+        "voxel_edge_ratio": VOXEL_EDGE_RATIO,
+        "crs": pyproj.CRS.from_epsg(CRS_EPSG).to_json_dict(),
+        # 以下はビューアが読まない補足
         "hierarchy": "additive_voxel_first",
         "spatial_order": "morton_3d_row_group",
-        "source_las": {"point_format": 3, "extra_bytes_per_point": 0, "scan_angle_scale": 1.0},
-        "crs": CRS,
         "source": os.path.basename(args.input),
     }
+    check_point_cloud_meta(meta)
     drop = [c for c in args.drop if c not in args.keep_columns]
     if any(c in drop for c in ("x", "y", "z", "red", "green", "blue")):
         sys.exit("x/y/z/red/green/blue は PCP が必須とするので落とせない")
@@ -195,16 +204,33 @@ def stage2_write(args, sorted_path, qbounds):
         sys.exit(f"row group 数が見積りと一致しない: 書き込み {got_ends} / メタデータ {ends}")
 
 
+def check_point_cloud_meta(pc):
+    """ビューア worker の検証関数 (isPointCloudMetadata 相当) を写したもの。落ちると "Invalid point_cloud metadata" になる"""
+    def nums(v, n):
+        return isinstance(v, list) and len(v) == n and all(isinstance(x, (int, float)) and math.isfinite(x) for x in v)
+    assert pc["version"] == "0.1.0", "version"
+    assert nums(pc["scale"], 3) and all(s > 0 for s in pc["scale"]), "scale"
+    assert nums(pc["offset"], 3), "offset"
+    assert nums(pc["bounds"], 6), "bounds"
+    ends = pc["level_row_group_ends"]
+    assert isinstance(ends, list) and ends and all(isinstance(e, int) and e >= 0 for e in ends), "level_row_group_ends"
+    assert all(a <= b for a, b in zip(ends, ends[1:])), "level_row_group_ends は単調非減少"
+    assert isinstance(pc["voxel_edge_ratio"], int) and pc["voxel_edge_ratio"] >= 2, "voxel_edge_ratio"
+    assert pc["crs"] is None or isinstance(pc["crs"], dict), "crs は null か PROJJSON オブジェクト"
+
+
 def verify(path):
     pf = pq.ParquetFile(path)
     md = pf.metadata
     kv = md.metadata or {}
     pc = json.loads(kv[b"point_cloud"])
+    check_point_cloud_meta(pc)
     size = os.path.getsize(path)
     footer = md.serialized_size
     log(f"verify: {path}")
     log(f"  {md.num_rows:,} points, {md.num_row_groups} row groups, {size / 1e6:,.0f} MB, footer {footer / 1e6:.1f} MB")
     log(f"  levels {len(pc['level_row_group_ends'])}, ends {pc['level_row_group_ends']}")
+    log(f"  voxel_edge_ratio {pc['voxel_edge_ratio']}, crs {pc['crs']['id'] if pc['crs'] else None}")
     log(f"  bounds {pc['bounds']}")
     assert pc["level_row_group_ends"][-1] == md.num_row_groups
     idx = {name: i for i, name in enumerate(pf.schema_arrow.names)}

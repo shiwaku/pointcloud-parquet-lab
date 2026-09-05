@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 # 1. 変換 (250M 点。DuckDB のソートに数十 GB の spill が出るので C:/mm/duckdb_tmp を使う)
 python scripts/build_pcp.py data/09jc602_geoarrow.parquet data/09jc602_pcp.parquet
 
-# 動作確認用の小さいファイル (200 m 四方、約 180 万点)
+# 動作確認用の小さいファイル (200 m 四方、約 212 万点)
 # python scripts/build_pcp.py data/09jc602_geoarrow.parquet data/09jc602_pcp_test.parquet `
 #   --where "geometry.x BETWEEN -77200 AND -77000 AND geometry.y BETWEEN 11000 AND 11200"
 
@@ -26,3 +26,7 @@ aws s3 cp data/09jc602_pcp.parquet "s3://$Bucket/geoparquet/pcp/09jc602_pcp.parq
 # 3. https://kanahiro.github.io/pcp/ の「Parquet source」に公開 URL を入れて Open
 #    https://shi-works.com/geoparquet/pcp/09jc602_pcp.parquet
 #    https://shi-works.com/geoparquet/pcp/09jc602_pcp_test.parquet
+#    headless Chrome で確認するなら (puppeteer-core が必要):
+#    node viewer/dev/test_pcp.mjs https://shi-works.com/geoparquet/pcp/09jc602_pcp_test.parquet
+#    ビューアの検証ルールは更新で変わる (2026-09-05 に voxel_edge_ratio / PROJJSON crs が必須になった)。
+#    "Invalid point_cloud metadata" が出たら worker JS の isPointCloudMetadata 相当を読み直して build_pcp.py を合わせる

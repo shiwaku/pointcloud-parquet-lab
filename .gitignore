@@ -15,6 +15,7 @@ data/
 viewer/test_*.png
 viewer/headless.png
 viewer/serve.log
+viewer/dev/out/
 
 # 第三者のビューアのスクリーンショット (参考用。公開しない)
 docs/images/reference_*.png
