@@ -1057,7 +1057,7 @@ TO 'data/ground/ground_d1_geoarrow.parquet' (FORMAT PARQUET, COMPRESSION ZSTD, R
 
 ```powershell
 # P1
-pdal translate data 9jc602 9jc602.las data\ground\ground_p1_las.laz range --filters.range.limits="Classification[2:2]" --readers.las.override_srs=EPSG:6677
+pdal translate data/09jc602/09jc602.las data/ground/ground_p1_las.laz range --filters.range.limits="Classification[2:2]" --readers.las.override_srs=EPSG:6677
 ```
 
 - **DuckDB は PDAL の 7〜11 倍速い** (8 秒 vs 60〜90 秒)。列指向なので Classification 列を先に読んで該当行だけ他列を取り出せ、
