@@ -10,6 +10,7 @@
 - **保管・受け渡しは LAZ**。最小 (LAS の 22%)。ただし空間インデックスが無く、範囲抽出は全読み (85 秒)
 - **Web 配信・ビューアは COPC**。LAZ の 1.2 倍のサイズで範囲抽出 0.5 秒、LOD 付き。生成は untwine で 5 分半
 - **SQL で集計・結合するなら GeoParquet**。列単位の集計が 0.3〜0.6 秒で他形式が勝てない。範囲抽出も row group 統計で 0.1〜1.8 秒
+- **属性で絞る処理も GeoParquet + DuckDB**。地盤点 (Classification 2、1,134 万点) の抜き出しが 8 秒。PDAL は LAS / LAZ / COPC のどれからでも 60〜90 秒 ([REPORT 12 章](REPORT.md#12-地盤点-classification-2-の抽出-duckdb-vs-pdal-2026-09-06))
 - GeoParquet で LOD 付き配信もできる (PCP、[REPORT 11 章](REPORT.md#11-pcp-point-cloud-parquet-への変換と-r2-配置)) が、読めるビューアが 1 つで要件も変わる。標準の GeoParquet ではない
 - Parquet の新エンコード ALP でも LAZ には届かない。差は座標の予測残差符号化と属性列の圧縮にあり、Parquet の枠組みに無い ([REPORT 8 章](REPORT.md#8-alp-を使えば-laz-に近づくか))
 
@@ -69,7 +70,7 @@ python scripts/build_pcp.py data/09jc602_geoarrow.parquet data/09jc602_pcp.parqu
 ```
 scripts/        変換・検証スクリプト (PDAL パイプライン, DuckDB SQL, PCP 変換, R2 アップロード)
 viewer/         GeoParquet ビューア (index.html, app.js) と MapLibre 版 (maplibre.html, maplibre.js)。worker.js / points.js を共用。puppeteer テストは dev/
-experiments/    ALP エンコードの検証、COPC 生成時間の切り分け (results/ にログ)
+experiments/    ALP エンコードの検証、COPC 生成時間の切り分け、地盤点抽出の DuckDB vs PDAL (results/ にログ)
 qgis/           QGIS 用 QML (標高 / RGB)。scripts/make_qgis_styles.py が生成
 docs/images/    スクリーンショット
 REPORT.md       作業記録の全文 (入力データ、環境、手順、計測、ビューア調査、PCP、残課題)

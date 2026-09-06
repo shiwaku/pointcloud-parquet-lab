@@ -1,0 +1,40 @@
+# ground_bench 2026-09-06 18:11:26  PDAL 2.10.2 / DuckDB 1.1.3 / 16 threads
+## A. 全域の地盤点を書き出す
+D1 DuckDB geoarrow -> GeoParquet(struct, ZSTD)                  8.2 s
+D1b   + geo メタデータ付与 (copy_geo_metadata.py)                      4.2 s
+  size data\ground\ground_d1_geoarrow.parquet                   150 MB
+  count data\ground\ground_d1_geoarrow.parquet                 11,340,200 points
+D2 DuckDB zstd(wkb) -> GeoParquet(wkb, ZSTD)                    7.0 s
+D2b   + geo メタデータ付与                                             4.7 s
+  size data\ground\ground_d2_wkb.parquet                        212 MB
+  count data\ground\ground_d2_wkb.parquet                      11,340,200 points
+D3 DuckDB snappy(xyz+wkb) -> GeoParquet(wkb, ZSTD)             10.4 s
+  size data\ground\ground_d3_snappy_src.parquet                 202 MB
+  count data\ground\ground_d3_snappy_src.parquet               11,340,200 points
+P1 PDAL LAS -> LAZ (filters.range)                             60.7 s
+  size data\ground\ground_p1_las.laz                            107 MB
+  count data\ground\ground_p1_las.laz                          11,340,200 points
+P2 PDAL LAZ -> LAZ                                             65.0 s
+  size data\ground\ground_p2_laz.laz                            107 MB
+  count data\ground\ground_p2_laz.laz                          11,340,200 points
+P3 PDAL COPC -> LAZ                                            91.2 s
+  size data\ground\ground_p3_copc.laz                           125 MB
+  count data\ground\ground_p3_copc.laz                         11,340,200 points
+P4 PDAL LAS -> GeoParquet (writers.arrow)                      88.2 s
+  size data\ground\ground_p4_las.parquet                        395 MB
+  count data\ground\ground_p4_las.parquet                      11,340,200 points
+## B. 数えるだけ (書き出し無し)
+DuckDB count geoarrow                                           0.4 s
+DuckDB count zstd(wkb)                                          0.3 s
+DuckDB count snappy                                             0.5 s
+PDAL LAS  -> filters.range -> writers.null                     88.1 s
+PDAL LAZ  -> filters.range -> writers.null                     78.9 s
+PDAL COPC -> filters.range -> writers.null                     84.6 s
+## C. 100 m 四方の地盤点 (X -77100..-77000, Y 11000..11100)
+DuckDB geoarrow bbox+class -> GeoParquet                        0.5 s
+  count data\ground\ground_bbox_duckdb.parquet                     91,512 points
+PDAL COPC readers.copc.bounds + range -> LAZ                    0.6 s
+  count data\ground\ground_bbox_copc.laz                           91,512 points
+PDAL LAZ filters.crop + range -> LAZ (全読み)                     79.2 s
+  count data\ground\ground_bbox_laz.laz                            91,512 points
+# done 18:22:39

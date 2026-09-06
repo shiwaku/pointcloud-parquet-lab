@@ -97,6 +97,7 @@ GeoParquet そのままでも row group 単位の部分読みは効く ([10 章]
 │   └── r2_cors.json          R2 バケットの CORS 設定
 ├── experiments/alp/        「ALP で LAZ に近づくか」の検証 (results/ に実行ログ)
 ├── experiments/copc/       COPC 生成時間の切り分け (writers.copc の点数スケーリング vs untwine)
+├── experiments/ground/     地盤点 (Classification 2) 抽出の DuckDB vs PDAL 比較 (results/ に実行ログ)
 ├── viewer/                 GeoParquet 点群ビューア (deck.gl + hyparquet)
 │   ├── index.html / app.js / worker.js / points.js
 │   ├── maplibre.html / maplibre.js   MapLibre の地図に重ねる版 (worker.js / points.js を共用)
@@ -113,7 +114,9 @@ GeoParquet そのままでも row group 単位の部分読みは効く ([10 章]
     ├── 09jc602.parquet / 09jc602_zstd.parquet / 09jc602_geoarrow.parquet
     ├── 09jc602_geoarrow_overview.parquet   ビューアの概観用
     ├── 09jc602_pcp.parquet / 09jc602_pcp_test.parquet   PCP 形式 (全体 / 200 m 四方のテスト)。*.sql は生成に使った DuckDB SQL
-    └── 09jc602_int32_*.parquet / 09jc602_double_bss.parquet   ALP 実験 (GeoParquet として無効)
+    ├── 09jc602_int32_*.parquet / 09jc602_double_bss.parquet   ALP 実験 (GeoParquet として無効)
+    ├── 09jc602_geoarrow_200m.parquet / 09jc602_geoarrow_overview_200m.parquet   200 m 四方の切り出し (QGIS 3D 用)
+    └── ground/                地盤点抽出の出力 (12 章)
 ```
 
 スクリプトはすべてリポジトリルートをカレントにして実行する前提で、
@@ -1027,7 +1030,75 @@ L0〜L5 (8.4 万点) に留まる。これは幾何誤差の見積りが 4 倍�
 - Auto LOD を OFF にすると Resolution スライダで「L0 〜 Lk」を固定して全 row group を読む
 - 読んだ row group は保持し、視点が動くと差分だけ追加読みする
 
-## 12. 未着手・残課題
+## 12. 地盤点 (Classification 2) の抽出: DuckDB vs PDAL (2026-09-06)
+
+DEM を作るための地盤点だけを抜き出す処理を、GeoParquet + DuckDB と LAS/LAZ/COPC + PDAL で比べた。
+地盤点 (ASPRS class 2) は 11,340,200 点 (4.5 %)。他は 5 (高植生) 86.2 %、6 (建物) 9.2 % で、この 3 クラスしか無い。
+スクリプトは `experiments/ground/ground_bench.ps1`、ログは `results/ground_bench.log`、出力は `data/ground/` (git 管理外)。
+すべてのケースで出力点数が一致することを確認している。
+
+### A. 全域の地盤点をファイルに書き出す
+
+| ケース | 入力 | 出力 | 時間 | 出力サイズ |
+|---|---|---|---|---|
+| D1 DuckDB | `09jc602_geoarrow.parquet` (ZSTD, struct) | GeoParquet (ZSTD, struct) | **8.2 s** (+ `geo` 付与 4.2 s) | 150 MB |
+| D2 DuckDB | `09jc602_zstd.parquet` (ZSTD, wkb) | GeoParquet (ZSTD, wkb) | 7.0 s (+ `geo` 付与 4.7 s) | 212 MB |
+| D3 DuckDB | `09jc602.parquet` (Snappy, xyz+wkb) | GeoParquet (ZSTD, wkb) | 10.4 s | 202 MB |
+| P1 PDAL | `09jc602.las` | LAZ | 60.7 s | 107 MB |
+| P2 PDAL | `09jc602.laz` | LAZ | 65.0 s | 107 MB |
+| P3 PDAL | `09jc602_untwine.copc.laz` | LAZ | 91.2 s | 125 MB |
+| P4 PDAL | `09jc602.las` | GeoParquet (`writers.arrow`, Snappy) | 88.2 s | 395 MB |
+
+```sql
+-- D1。DuckDB の COPY は geo メタデータを落とすので scripts/copy_geo_metadata.py で付け直す
+COPY (SELECT * FROM 'data/09jc602_geoarrow.parquet' WHERE Classification = 2)
+TO 'data/ground/ground_d1_geoarrow.parquet' (FORMAT PARQUET, COMPRESSION ZSTD, ROW_GROUP_SIZE 1000000);
+```
+
+```powershell
+# P1
+pdal translate data 9jc602 9jc602.las data\ground\ground_p1_las.laz range --filters.range.limits="Classification[2:2]" --readers.las.override_srs=EPSG:6677
+```
+
+- **DuckDB は PDAL の 7〜11 倍速い** (8 秒 vs 60〜90 秒)。列指向なので Classification 列を先に読んで該当行だけ他列を取り出せ、
+  16 スレッドで row group を並列に処理する。PDAL は全点を 1 点ずつパイプラインに通す単一スレッド処理で、
+  入力形式 (LAS 8.5 GB / LAZ 1.9 GB / COPC 2.3 GB) を変えても 60〜90 秒で大差が無い。ボトルネックは I/O ではなく点ごとの処理
+- COPC 入力 (P3) は LAZ 入力より遅く、出力 LAZ も大きい (125 MB vs 107 MB)。全点を読む用途では八分木の走査が
+  オーバーヘッドになり、出力が八分木順 (空間順) になるため LAZ の前点予測がスキャン順ほど効かない
+- PDAL の GeoParquet 出力 (P4) は 395 MB と大きい。`writers.arrow` は Snappy 固定で xyz と wkb を二重に持つ ([5.1 節](#51-pdal-writersarrow-las--geoparquet))
+- DuckDB 出力の中では GeoArrow struct 版 (D1, 150 MB) が最小で、QGIS からもそのまま読める。DEM 生成に渡すなら
+  PDAL の `writers.gdal` が読める LAZ (P1, 107 MB) が扱いやすい。D1 の GeoParquet を PDAL に渡すなら `readers.arrow` (要 arrow プラグイン)
+
+### B. 数えるだけ (書き出し無し)
+
+| ツール | 入力 | 時間 |
+|---|---|---|
+| DuckDB `SELECT count(*) … WHERE Classification = 2` | geoarrow / zstd / snappy | 0.4 / 0.3 / 0.5 s |
+| PDAL `filters.range` → `writers.null` | LAS / LAZ / COPC | 88.1 / 78.9 / 84.6 s |
+
+DuckDB は Classification 列 (辞書圧縮で数十 MB) しか読まないので 0.5 秒以下。PDAL は書き出しを省いても速くならず、
+むしろ P1 (LAZ 出力 60.7 s) より遅い。PDAL の時間は書き出しではなく読み込み + フィルタで決まり、
+実行ごとに 15〜30 秒ばらつく (ページキャッシュとスレッドスケジューリング) と見るべき。
+
+### C. 100 m 四方の地盤点だけ (空間インデックスが効く場面)
+
+| ツール | 方法 | 時間 | 点数 |
+|---|---|---|---|
+| DuckDB (geoarrow) | `WHERE Classification = 2 AND geometry.x BETWEEN … AND geometry.y BETWEEN …` → GeoParquet | **0.5 s** | 91,512 |
+| PDAL (COPC) | `readers.copc.bounds` + `filters.range` → LAZ | **0.6 s** | 91,512 |
+| PDAL (LAZ) | `filters.crop` + `filters.range` → LAZ (全読み) | 79.2 s | 91,512 |
+
+範囲を絞る用途では GeoParquet (row group 統計) と COPC (八分木) が同等で、LAZ だけ全読みになる。
+1 章の bbox クエリと同じ構図。
+
+### まとめ
+
+- 分類コードで地盤点を抜く処理は **DuckDB + GeoParquet が 8 秒、PDAL が 60〜90 秒**。属性で絞る処理は列指向 + 並列の Parquet が向く
+- PDAL 側は入力形式 (LAS / LAZ / COPC) による差が小さく、単一スレッドの点処理が上限
+- 範囲を絞るなら GeoParquet と COPC は同等 (0.5 秒)、LAZ は全読み (79 秒)
+- 抽出後に DEM (ラスタ) を作る段は未計測。PDAL `writers.gdal` (IDW / mean) か、DuckDB で格子集計 → GDAL、のどちらでもできる
+
+## 13. 未着手・残課題
 
 - CRS EPSG:6677 はファイル名と座標値からの推定。確定情報があれば全形式を再生成する
 - PCP ビューアの検証ルールが再び変わったら `build_pcp.py` を合わせて再生成する (9/5 の `voxel_edge_ratio` / PROJJSON `crs` の例。仕様書が無いので追随するしかない)
